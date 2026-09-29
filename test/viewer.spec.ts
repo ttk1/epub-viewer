@@ -132,6 +132,20 @@ test.describe('nepub-style EPUB (vertical)', () => {
     await expect.poll(() => pageBackground(page)).toEqual(DARK)
   })
 
+  test('limits the page width, centered, and turns pages by clicking the sides', async ({ page }) => {
+    await page.locator('#width').selectOption('600')
+    const viewer = (await page.locator('#viewer').boundingBox())!
+    const frame = page.locator('#viewer iframe')
+    await expect.poll(async () => (await frame.boundingBox())!.width).toBe(600)
+    expect(Math.round((await frame.boundingBox())!.x - viewer.x)).toBe(Math.round((viewer.width - 600) / 2))
+    expect(await evaluate(page, () => innerWidth)).toBe(600) // laid out for the narrower page
+
+    await click(page, viewer.x + 10, viewer.y + viewer.height / 2) // left side: next page (vertical)
+    await expect(page.locator('#progress')).toHaveText(/^2 \//)
+    await click(page, viewer.x + viewer.width - 10, viewer.y + viewer.height / 2)
+    await expect(page.locator('#progress')).toHaveText(/^1 \//)
+  })
+
   test('larger font makes more pages', async ({ page }) => {
     const before = await pageCount(page)
     for (let i = 0; i < 5; i++) await page.locator('#font-up').click()

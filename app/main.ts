@@ -6,6 +6,7 @@ interface Settings {
   font: 'mincho' | 'gothic' | 'book'
   fontSize: number
   writingMode: ViewerOptions['writingMode']
+  maxWidth: number
 }
 
 const SETTINGS_KEY = 'epub-viewer:settings'
@@ -31,6 +32,7 @@ const settings: Settings = {
   font: 'mincho',
   fontSize: 45, // large enough to read comfortably at a distance
   writingMode: 'auto',
+  maxWidth: 0,
   ...load<Settings>(SETTINGS_KEY),
 }
 const viewer = new EpubViewer($('viewer'))
@@ -47,11 +49,13 @@ function applySettings(): void {
   $<HTMLSelectElement>('theme').value = settings.theme
   $<HTMLSelectElement>('font').value = settings.font
   $<HTMLSelectElement>('writing-mode').value = settings.writingMode
+  $<HTMLSelectElement>('width').value = String(settings.maxWidth)
   viewer.setOptions({
     theme: themes[theme],
     fontFamily: settings.font === 'book' ? '' : fonts[settings.font],
     fontSize: settings.fontSize,
     writingMode: settings.writingMode,
+    maxWidth: settings.maxWidth,
   })
 }
 
@@ -105,16 +109,17 @@ $<HTMLSelectElement>('toc').addEventListener('change', (e) => {
   select.value = ''
   select.blur() // give arrow keys back to page turning
 })
-const bindSelect = <K extends 'theme' | 'font' | 'writingMode'>(id: string, key: K) =>
+const bindSelect = <K extends 'theme' | 'font' | 'writingMode' | 'maxWidth'>(id: string, key: K) =>
   $<HTMLSelectElement>(id).addEventListener('change', (e) => {
     const select = e.target as HTMLSelectElement
-    settings[key] = select.value as Settings[K]
+    settings[key] = (typeof settings[key] === 'number' ? Number(select.value) : select.value) as Settings[K]
     select.blur()
     applySettings()
   })
 bindSelect('theme', 'theme')
 bindSelect('font', 'font')
 bindSelect('writing-mode', 'writingMode')
+bindSelect('width', 'maxWidth')
 systemDark.addEventListener('change', applySettings) // follow OS changes while theme is "system"
 // ×1.2 per step: equal-looking steps at any size.
 const changeFontSize = (ratio: number) => {

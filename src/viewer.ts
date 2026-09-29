@@ -34,6 +34,8 @@ export interface ViewerOptions {
   writingMode: 'auto' | 'vertical' | 'horizontal'
   /** Page margin in CSS px. */
   margin: number
+  /** Maximum page width in CSS px, centered in the container (0 = full width). Wide lines of text tire the eyes. */
+  maxWidth: number
   /** Turn pages with ←/→, PageUp/PageDown and Space pressed anywhere in the host window. */
   keyboard: boolean
   /**
@@ -95,6 +97,7 @@ const DEFAULTS: ViewerOptions = {
   fontSize: 16,
   writingMode: 'auto',
   margin: 32,
+  maxWidth: 0,
   keyboard: true,
   cooldown: 100,
 }
@@ -135,8 +138,9 @@ export class EpubViewer extends EventTarget {
     // allow-scripts: WebKit does not fire our event listeners without it. The book's own
     // scripts are still blocked by the CSP that Book inserts into every document.
     this.#iframe.sandbox.add('allow-same-origin', 'allow-scripts')
-    this.#iframe.style.cssText = 'display:block;width:100%;height:100%;border:0'
+    this.#iframe.style.cssText = 'display:block;width:100%;height:100%;margin:0 auto;border:0'
     container.append(this.#iframe)
+    container.addEventListener('click', this.#onSideClick)
     this.setOptions(options)
     this.#resizeObserver.observe(container)
     this.#listenKeys(this.#window, 'addEventListener')
@@ -184,7 +188,9 @@ export class EpubViewer extends EventTarget {
 
   setOptions(options: Partial<ViewerOptions>): void {
     Object.assign(this.#options, options)
-    this.#container.style.background = this.#options.theme.background
+    const { theme, maxWidth } = this.#options
+    this.#container.style.background = theme.background
+    this.#iframe.style.maxWidth = maxWidth > 0 ? `${maxWidth}px` : ''
     this.#relayout()
   }
 
@@ -192,6 +198,7 @@ export class EpubViewer extends EventTarget {
     this.#token++
     this.#resizeObserver.disconnect()
     this.#listenKeys(this.#window, 'removeEventListener')
+    this.#container.removeEventListener('click', this.#onSideClick)
     this.#iframe.remove()
   }
 
@@ -405,6 +412,14 @@ export class EpubViewer extends EventTarget {
     const x = e.clientX / this.#iframe.clientWidth
     if (x < 1 / 3) this.#inputTurn(this.goLeft)
     else if (x > 2 / 3) this.#inputTurn(this.goRight)
+  }
+
+  /** Clicks on the empty sides of a width-limited page turn pages too. */
+  #onSideClick = (e: MouseEvent): void => {
+    if (e.target !== this.#container) return
+    const { left, right } = this.#iframe.getBoundingClientRect()
+    if (e.clientX < left) this.#inputTurn(this.goLeft)
+    else if (e.clientX > right) this.#inputTurn(this.goRight)
   }
 
   #followLink(href: string): void {
