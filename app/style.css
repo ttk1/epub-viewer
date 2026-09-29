@@ -1,66 +1,13 @@
-:root {
-  --bg: #f3f3f3;
-  --fg: #1a1a1a;
-  --border: #d0d0d0;
-  color-scheme: light;
-}
-:root[data-theme='dark'] {
-  --bg: #161616;
-  --fg: #acacac;
-  --border: #333;
-  color-scheme: dark;
-}
-* {
-  box-sizing: border-box;
-}
+/* Page layout only; the reader's own styles come with EpubReader. */
 body {
-  display: flex;
-  flex-direction: column;
   height: 100dvh;
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: system-ui, sans-serif;
-}
-#toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  font-size: 14px;
-}
-#toolbar button,
-#toolbar select,
-.button {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-#toc {
-  max-width: 14em;
-}
-#title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: bold;
-}
-#viewer {
-  flex: 1;
-  min-height: 0;
 }
 #placeholder {
   position: fixed;
   inset: 50% 0 auto;
   margin: 0;
   text-align: center;
-  opacity: 0.7;
+  font-family: system-ui, sans-serif;
+  color: #888;
 }

@@ -36,7 +36,7 @@ export interface ViewerOptions {
   margin: number
   /** Maximum page width in CSS px, centered in the container (0 = full width). Wide lines of text tire the eyes. */
   maxWidth: number
-  /** Turn pages with ←/→, PageUp/PageDown and Space pressed anywhere in the host window. */
+  /** Turn pages with ←/→, ↑/↓, PageUp/PageDown and Space pressed anywhere in the host window. */
   keyboard: boolean
   /**
    * Page-turn keys and clicks within this many ms of the previous accepted one are ignored, so that
@@ -47,7 +47,7 @@ export interface ViewerOptions {
 
 /** A position that survives re-layout (font size / window size changes). */
 export interface Location {
-  /** Index into `book.sections`. */
+  /** Index into `book.sections`. Negative counts from the end, as in `Array.at()` (-1 = last section). */
   index: number
   /** Position within the section, 0 (first page) to 1 (last page). */
   progress: number
@@ -73,6 +73,8 @@ export interface EpubViewerEventMap {
   sectionload: CustomEvent<{ index: number; doc: Document }>
   /** An external http(s): / mailto: link was clicked. Call preventDefault() to stop it from opening in a new tab. */
   link: CustomEvent<{ href: string }>
+  /** A page turn by key or click failed (e.g. a broken section). Calls from code reject instead. */
+  error: CustomEvent<{ error: unknown }>
 }
 
 // Typed addEventListener / removeEventListener overloads.
@@ -163,7 +165,10 @@ export class EpubViewer extends EventTarget {
   }
 
   async goTo(target: Location | string): Promise<void> {
-    if (typeof target !== 'string') return this.#display(target.index, { progress: target.progress })
+    if (typeof target !== 'string') {
+      const index = target.index < 0 ? (this.book?.sections.length ?? 0) + target.index : target.index
+      return this.#display(index, { progress: target.progress })
+    }
     const [path, fragment] = target.split('#')
     const index = this.book?.sections.findIndex((s) => s.href === path) ?? -1
     if (index >= 0) await this.#display(index, { fragment })
@@ -239,9 +244,11 @@ export class EpubViewer extends EventTarget {
     this.#busy = true
     try {
       if (index !== this.#index) {
-        this.#index = -1
-        const doc = await this.#load(await this.book!.getUrl(section.href))
+        const url = await this.book!.getUrl(section.href) // may throw; the current page stays usable
         if (token !== this.#token) return // superseded by a newer navigation
+        this.#index = -1
+        const doc = await this.#load(url)
+        if (token !== this.#token) return
         this.#index = index
         this.#setup(doc)
       }
@@ -369,6 +376,8 @@ export class EpubViewer extends EventTarget {
     const actions: Record<string, () => Promise<void>> = {
       ArrowLeft: this.goLeft,
       ArrowRight: this.goRight,
+      ArrowUp: this.prev, // e.g. the up / down buttons of a remote control
+      ArrowDown: this.next,
       PageUp: this.prev,
       PageDown: this.next,
       ' ': e.shiftKey ? this.prev : this.next,
@@ -397,7 +406,7 @@ export class EpubViewer extends EventTarget {
     const now = performance.now()
     if (now - this.#lastInputTurn < this.#options.cooldown) return
     this.#lastInputTurn = now
-    void action.call(this)
+    action.call(this).catch((error: unknown) => this.dispatchEvent(new CustomEvent('error', { detail: { error } })))
   }
 
   /** Clicks inside the page: follow links, or turn pages when the left/right third is clicked. */

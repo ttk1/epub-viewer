@@ -1,4 +1,5 @@
 export { openBook, type Book, type BookSource, type Metadata, type Section, type TocItem } from './book.ts'
+export { EpubReader, type OpenOptions, type ReaderOptions, type ReaderSettings } from './reader.ts'
 export {
   EpubViewer,
   fonts,

@@ -8,38 +8,7 @@
     <script type="module" src="../dist/app/main.js"></script>
   </head>
   <body>
-    <header id="toolbar">
-      <label class="button">開く<input id="file" type="file" accept=".epub,application/epub+zip" hidden /></label>
-      <select id="toc" aria-label="目次" disabled><option>目次</option></select>
-      <span id="title"></span>
-      <span id="progress"></span>
-      <button id="font-down" title="文字を小さく">A−</button>
-      <button id="font-up" title="文字を大きく">A＋</button>
-      <select id="font" title="フォント">
-        <option value="mincho">明朝</option>
-        <option value="gothic">ゴシック</option>
-        <option value="book">本の指定</option>
-      </select>
-      <select id="width" title="表示幅">
-        <option value="0">幅: 全幅</option>
-        <option value="1400">幅: 1400px</option>
-        <option value="1200">幅: 1200px</option>
-        <option value="1000">幅: 1000px</option>
-        <option value="800">幅: 800px</option>
-        <option value="600">幅: 600px</option>
-      </select>
-      <select id="writing-mode" title="表示方向">
-        <option value="auto">自動</option>
-        <option value="vertical">縦書き</option>
-        <option value="horizontal">横書き</option>
-      </select>
-      <select id="theme" title="テーマ">
-        <option value="system">システム</option>
-        <option value="light">ライト</option>
-        <option value="dark">ダーク</option>
-      </select>
-    </header>
-    <main id="viewer"></main>
+    <div id="reader"></div>
     <p id="placeholder">EPUB ファイルを開くか、ここにドラッグ＆ドロップしてください</p>
   </body>
 </html>

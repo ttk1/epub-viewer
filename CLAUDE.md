@@ -15,8 +15,9 @@
 | `src/zip.ts` | 最小 ZIP リーダー（stored / deflate のみ、`DecompressionStream` 使用） |
 | `src/book.ts` | EPUB 解析（`openBook`）。リソースを blob: URL 化し、HTML/CSS の参照を書き換える |
 | `src/viewer.ts` | `EpubViewer`。iframe + CSS 段組みでページ分割、縦書き、テーマ、フォント、キー操作、イベント |
+| `src/reader.ts` | `EpubReader`。ツールバー付きの画面（設定・読書位置の保存込み）。単体アプリと組み込み先の両方で使う |
 | `src/index.ts` | 公開 API（ここから export したものだけが公開 API） |
-| `app/` | 単体アプリ（ライブラリの利用例も兼ねる） |
+| `app/` | 単体アプリ（`EpubReader` に「開く」ボタン・ドラッグ＆ドロップ・`?url=` を足しただけ） |
 | `examples/series.*` | 次話への自動遷移の組み込み例 |
 | `scripts/` | 開発サーバー、サンプル EPUB 生成、テスト用 ZIP ライター（Node 専用・ブラウザには出さない） |
 | `test/` | Playwright テスト（Chromium / Firefox / WebKit） |
@@ -40,7 +41,7 @@ Windows の Git Bash から `docker` にコンテナ内パス（`/work` など�
    - 名前が役割を表しているか、コメントは「なぜ」を書いているか
    - 構造をシンプルに保つ（ファイル・抽象化を増やす前に既存に収まらないか検討）
 3. **ドキュメント**: 公開 API・オプション・イベント・操作方法を変えたら README.md を更新する。このファイルも「このファイルの運用」に従って更新する。Markdown の文は途中で改行しない（日本語では改行が余分な空白として表示されるため）。
-4. **nepub 互換**: nepub（https://github.com/ttk1/nepub）製 EPUB が第一の対象。`scripts/make-samples.js` の nepub 形式サンプルは nepub のテンプレートと同じ構造を保つ（`src/content.opf`、`navigation.xhtml`、`text/*.xhtml`、`span.tcy`、`dc:identifier` なし）。
+4. **nepub 互換**: nepub（https://github.com/ttk1/nepub）製 EPUB が第一の対象。`scripts/make-samples.js` の nepub 形式サンプルは nepub のテンプレートと同じ構造を保つ（`src/content.opf`、`navigation.xhtml`、`text/*.xhtml`、`span.tcy`、`dc:identifier` なし）。1 話ごとの EPUB（`episode-*.epub`）は、実際の使われ方に合わせて全話で作品名を共通にしている。
 5. **依存を増やさない**: ランタイム依存はゼロを維持する。追加が必要なら「サプライチェーン対策」の手順に従う。
 6. **コミット前の確認**: コミット対象（コード・コメント・ドキュメント・テストデータ・このファイル）にコミットにふさわしくない情報が入っていないか確認する。
    - ローカル環境の情報: 絶対パス（ユーザー名を含むホームディレクトリ等）、ホスト名、個人のツール設定・シェル固有の回避策、ローカルにインストールされたツールのバージョン
@@ -72,9 +73,11 @@ Windows の Git Bash から `docker` にコンテナ内パス（`/work` など�
   - 攻撃用ファイルはマニフェストに正しく登録すること（未登録だと MIME タイプが付かず、攻撃が成立しないまま「安全」と誤判定する）
   - セキュリティ対策を変えたら、対策を一時的に外してテストが失敗することも確認する
 - **iframe の背景**: 親ページと iframe 内の文書で `color-scheme` が異なると、ブラウザは iframe の背後を不透明な白で塗る（ダークモードで背景が白いままになる）。そのため iframe 内の `html` にテーマの背景色を直接塗っている。見た目の不具合は computed style では検出できないことがあるので、テストでは `pixel()` で実際の描画色を確認する。
-- **リモコン対応（チャタリング対策）**: ページ送りはリモコンでの操作も想定する。キーは「1 押下 1 ページ」で、押しっぱなしの判定は `event.repeat` ではなく keydown / keyup の自前管理で行う（リピートに repeat フラグを立てないリモコンがあるため）。加えて直前の操作から `cooldown`（100ms）以内の入力は無視する。意図的な速い連打を食わないよう、クールダウンは短く保つ。対象はユーザー入力（キー・クリック）だけで、`next()` などの API 呼び出しには掛けない。
+- **リモコン対応（チャタリング対策）**: ページ送りはリモコンでの操作も想定する（上下ボタン用に ↑↓ でもめくれる）。キーは「1 押下 1 ページ」で、押しっぱなしの判定は `event.repeat` ではなく keydown / keyup の自前管理で行う（リピートに repeat フラグを立てないリモコンがあるため）。加えて直前の操作から `cooldown`（100ms）以内の入力は無視する。意図的な速い連打を食わないよう、クールダウンは短く保つ。対象はユーザー入力（キー・クリック）だけで、`next()` などの API 呼び出しには掛けない。
 - **ページ分割**: `html` 要素を段組みコンテナにし、padding m + column-gap 2m で各段がページサイズの整数倍の位置から始まるようにしている。縦書きでは段が下方向に並ぶのでページ送りは `scrollTop`、横書きは `scrollLeft`。
 - **和文フォントとルビ**: Meiryo は字面に対して行の高さ（ascent + descent）が大きく、縦書きでルビが本文から離れる。フォントスタック（`fonts`）では游明朝・游ゴシックを Meiryo より優先する。
 - **スクリーンショットでの見た目確認（デバッグ用）**: Playwright イメージの既定のフォールバックフォントでは縦書きの漢字が重なって描画される（ライブラリの不具合ではない）。iframe 内で `font-family: IPAGothic` を指定するか、Windows のフォント（`C:/Windows/Fonts/*.ttf` など）を読み取り専用で `/usr/share/fonts/` にマウントして `fc-cache -f` してから撮る。フォントはコミットしない。
 - **ファイル監視**: Docker Desktop のバインドマウント（特に Windows）ではファイル変更通知がコンテナに届かないことがあり、TS 7 の `tsc --watch` はポーリングに対応していない。そのため `scripts/serve.js --build` がページ読み込み時にソースの更新時刻を見て再ビルドする。
+- **読書位置のキー**: 1 話ごとの EPUB は作品名が共通で著者も空のことが多く、タイトルをキーにすると全話で位置を共有してしまう。`EpubReader` は `dc:identifier` → URL・ファイル名の順にキーを決め、組み込む側は `open(source, { key })` で指定できる。
+- **EpubReader**: 1 ページに複数置けるよう ID は使わずクラスで要素を探し、スタイルは `.epub-reader` の下に閉じて `<style>` で 1 回だけ挿入する。設定のセレクトは `data-setting` 属性で共通処理しているので、設定を増やすときは `TOOLBAR` の選択肢・`ReaderSettings`・`DEFAULT_SETTINGS`・`#apply` を揃えて更新する。
 - import は `.ts` 拡張子で書く（`rewriteRelativeImportExtensions` で `.js` に書き換わる）。

@@ -1,7 +1,8 @@
 // Generates sample EPUBs into samples/ for development and tests.
 //   nepub.epub        : same structure as EPUBs made by nepub (https://github.com/ttk1/nepub), 3 episodes
 //   episode-{1,2,3}.epub : nepub-style, one episode each (for examples/series.html)
-//   general.epub      : EPUB 2 style (NCX, OEBPS/, horizontal English, image, @import, non-linear item)
+//   general.epub      : EPUB 2 style (NCX, OEBPS/, horizontal English, image, @import, non-linear item),
+//                       plus hostile content and a last spine item missing from the archive
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createZip } from './zip.js'
 
@@ -132,11 +133,13 @@ function generalEpub() {
     <item id="ch1" href="Text/chapter1.xhtml" media-type="application/xhtml+xml"/>
     <item id="notes" href="Text/notes.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch2" href="Text/chapter%202.xhtml" media-type="application/xhtml+xml"/>
+    <item id="missing" href="Text/missing.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine toc="ncx">
     <itemref idref="ch1"/>
     <itemref idref="notes" linear="no"/>
     <itemref idref="ch2"/>
+    <itemref idref="missing"/>
   </spine>
 </package>`
   const ncx = `<?xml version="1.0" encoding="UTF-8"?>
@@ -182,6 +185,7 @@ function generalEpub() {
 
 mkdirSync('samples', { recursive: true })
 writeFileSync('samples/nepub.epub', nepubEpub('nepub 形式サンプル', [1, 2, 3].map(episode)))
-for (const n of [1, 2, 3]) writeFileSync(`samples/episode-${n}.epub`, nepubEpub(`連載サンプル 第${n}話`, [episode(n)]))
+// Per-episode EPUBs usually share the novel's title (and have no identifier).
+for (const n of [1, 2, 3]) writeFileSync(`samples/episode-${n}.epub`, nepubEpub('連載サンプル', [episode(n)]))
 writeFileSync('samples/general.epub', generalEpub())
 console.log('Generated samples/*.epub')
