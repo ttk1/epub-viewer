@@ -36,6 +36,11 @@ export interface ViewerOptions {
   margin: number
   /** Turn pages with ←/→, PageUp/PageDown and Space pressed anywhere in the host window. */
   keyboard: boolean
+  /**
+   * Page-turn keys and clicks within this many ms of the previous accepted one are ignored, so that
+   * chattering (e.g. remote controls) does not skip pages. Keep it short so fast deliberate presses still work.
+   */
+  cooldown: number
 }
 
 /** A position that survives re-layout (font size / window size changes). */
@@ -91,6 +96,7 @@ const DEFAULTS: ViewerOptions = {
   writingMode: 'auto',
   margin: 32,
   keyboard: true,
+  cooldown: 100,
 }
 
 /**
@@ -117,6 +123,8 @@ export class EpubViewer extends EventTarget {
   /** Incremented on every navigation, so that stale async loads can be discarded. */
   #token = 0
   #busy = false
+  readonly #pressedKeys = new Set<string>()
+  #lastInputTurn = -Infinity
 
   /** `container` must have a size (e.g. width/height set by CSS); the viewer fills it. */
   constructor(container: HTMLElement, options: Partial<ViewerOptions> = {}) {
@@ -131,7 +139,7 @@ export class EpubViewer extends EventTarget {
     container.append(this.#iframe)
     this.setOptions(options)
     this.#resizeObserver.observe(container)
-    this.#window.addEventListener('keydown', this.#onKeydown)
+    this.#listenKeys(this.#window, 'addEventListener')
   }
 
   get options(): Readonly<ViewerOptions> {
@@ -183,8 +191,15 @@ export class EpubViewer extends EventTarget {
   destroy(): void {
     this.#token++
     this.#resizeObserver.disconnect()
-    this.#window.removeEventListener('keydown', this.#onKeydown)
+    this.#listenKeys(this.#window, 'removeEventListener')
     this.#iframe.remove()
+  }
+
+  /** Key handling for a window: the host page's, or a section document's (keys there don't reach the host). */
+  #listenKeys(target: Window, method: 'addEventListener' | 'removeEventListener'): void {
+    target[method]('keydown', this.#onKeydown as EventListener)
+    target[method]('keyup', this.#onKeyup as EventListener)
+    target[method]('blur', this.#onBlur)
   }
 
   get #window(): Window {
@@ -251,7 +266,7 @@ export class EpubViewer extends EventTarget {
     this.#bookWritingMode = doc.defaultView!.getComputedStyle(doc.body ?? doc.documentElement).writingMode
     this.#style = doc.createElement('style')
     ;(doc.head ?? doc.documentElement).append(this.#style)
-    doc.addEventListener('keydown', this.#onKeydown)
+    this.#listenKeys(doc.defaultView!, 'addEventListener')
     doc.addEventListener('click', this.#onClick)
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index: this.#index, doc } }))
   }
@@ -354,6 +369,27 @@ export class EpubViewer extends EventTarget {
     const action = actions[e.key]
     if (!action) return
     e.preventDefault()
+    // One press, one page: ignore auto-repeat while the key is held. Tracked here instead of
+    // `e.repeat` because some remote controls send repeats without setting it.
+    if (this.#pressedKeys.has(e.key)) return
+    this.#pressedKeys.add(e.key)
+    this.#inputTurn(action)
+  }
+
+  #onKeyup = (e: KeyboardEvent): void => {
+    this.#pressedKeys.delete(e.key)
+  }
+
+  /** A keyup may be missed while focus is elsewhere; forget held keys so the next press works. */
+  #onBlur = (): void => {
+    this.#pressedKeys.clear()
+  }
+
+  /** Page turn by user input, dropped as chattering if it comes within `cooldown` ms of the last one. */
+  #inputTurn(action: () => Promise<void>): void {
+    const now = performance.now()
+    if (now - this.#lastInputTurn < this.#options.cooldown) return
+    this.#lastInputTurn = now
     void action.call(this)
   }
 
@@ -367,8 +403,8 @@ export class EpubViewer extends EventTarget {
     }
     if (!this.#iframe.contentDocument?.getSelection()?.isCollapsed) return
     const x = e.clientX / this.#iframe.clientWidth
-    if (x < 1 / 3) void this.goLeft()
-    else if (x > 2 / 3) void this.goRight()
+    if (x < 1 / 3) this.#inputTurn(this.goLeft)
+    else if (x > 2 / 3) this.#inputTurn(this.goRight)
   }
 
   #followLink(href: string): void {

@@ -26,6 +26,18 @@ async function pageBackground(page: Page): Promise<number[]> {
 const pageCount = async (page: Page) =>
   Number((await page.locator('#progress').textContent())!.match(/\/ (\d+)/)![1])
 
+// User page turns closer together than the viewer's cooldown (100 ms) are dropped as chattering,
+// so wait a little after each one.
+const AFTER_INPUT = 150
+async function press(page: Page, key: string): Promise<void> {
+  await page.keyboard.press(key)
+  await page.waitForTimeout(AFTER_INPUT)
+}
+async function click(page: Page, x: number, y: number): Promise<void> {
+  await page.mouse.click(x, y)
+  await page.waitForTimeout(AFTER_INPUT)
+}
+
 test.describe('nepub-style EPUB (vertical)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/app/?url=/samples/nepub.epub')
@@ -37,22 +49,59 @@ test.describe('nepub-style EPUB (vertical)', () => {
     expect(await evaluate(page, () => getComputedStyle(document.documentElement).writingMode)).toBe('vertical-rl')
     expect(await pageCount(page)).toBeGreaterThan(1)
 
-    await page.keyboard.press('ArrowLeft') // left = next page for right-to-left books
+    await press(page, 'ArrowLeft') // left = next page for right-to-left books
     await expect(page.locator('#progress')).toHaveText(/^2 \//)
     const height = await evaluate(page, () => innerHeight)
     expect(await evaluate(page, () => document.scrollingElement!.scrollTop)).toBe(height)
 
-    await page.keyboard.press('ArrowRight')
+    await press(page, 'ArrowRight')
     await expect(page.locator('#progress')).toHaveText(/^1 \//)
+  })
+
+  test('ignores chattering: presses within the cooldown turn only one page', async ({ page }) => {
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(AFTER_INPUT)
+    await expect(page.locator('#progress')).toHaveText(/^2 \//)
+    await press(page, 'ArrowLeft') // after the cooldown, presses work again
+    await expect(page.locator('#progress')).toHaveText(/^3 \//)
+  })
+
+  test('holding a key turns only one page, even if repeats are not flagged', async ({ page }) => {
+    // Some remote controls send key repeats as plain keydown events (repeat: false).
+    const send = (type: string) =>
+      page.evaluate((type) => window.dispatchEvent(new KeyboardEvent(type, { key: 'ArrowLeft' })), type)
+    for (let i = 0; i < 3; i++) {
+      await send('keydown')
+      await page.waitForTimeout(AFTER_INPUT) // longer than the cooldown
+    }
+    await expect(page.locator('#progress')).toHaveText(/^2 \//)
+    await send('keyup')
+    await send('keydown')
+    await expect(page.locator('#progress')).toHaveText(/^3 \//)
+  })
+
+  test('keeps working when a key press inside the page moves to the next section', async ({ page }) => {
+    const box = (await page.locator('#viewer iframe').boundingBox())!
+    await click(page, box.x + box.width / 2, box.y + box.height / 2) // focus the page (center: no turn)
+    const pages = await pageCount(page)
+    for (let i = 1; i < pages; i++) await press(page, 'ArrowLeft')
+    // Hold the key while the next section replaces the page document, so the keyup goes elsewhere.
+    await page.keyboard.down('ArrowLeft')
+    await expect.poll(() => heading(page)).toBe('第2話　サンプル')
+    await page.keyboard.up('ArrowLeft')
+    await press(page, 'ArrowLeft')
+    await expect(page.locator('#progress')).toHaveText(/^2 \//)
   })
 
   test('moves to the next section after the last page and back', async ({ page }) => {
     const pages = await pageCount(page)
-    for (let i = 0; i < pages; i++) await page.keyboard.press('ArrowLeft')
+    for (let i = 0; i < pages; i++) await press(page, 'ArrowLeft')
     await expect.poll(() => heading(page)).toBe('第2話　サンプル')
     await expect(page.locator('#progress')).toHaveText(/^1 \//)
 
-    await page.keyboard.press('ArrowRight')
+    await press(page, 'ArrowRight')
     await expect.poll(() => heading(page)).toBe('第1話　サンプル')
     await expect(page.locator('#progress')).toHaveText(`${pages} / ${pages}（33%）`)
   })
@@ -90,8 +139,8 @@ test.describe('nepub-style EPUB (vertical)', () => {
   })
 
   test('resumes from the saved position after reload', async ({ page }) => {
-    await page.keyboard.press('ArrowLeft')
-    await page.keyboard.press('ArrowLeft')
+    await press(page, 'ArrowLeft')
+    await press(page, 'ArrowLeft')
     await expect(page.locator('#progress')).toHaveText(/^3 \//)
     await page.reload()
     await expect(page.locator('#progress')).toHaveText(/^3 \//)
@@ -111,7 +160,7 @@ test.describe('general EPUB 2 (horizontal)', () => {
     await expect.poll(() => evaluate(page, () => getComputedStyle(document.body).fontFamily)).toBe('serif') // via @import
     await expect(page.locator('#toc option')).toHaveText(['目次', 'Chapter 1', 'Chapter 2', '　Section 2.1'])
 
-    await page.keyboard.press('ArrowRight')
+    await press(page, 'ArrowRight')
     await expect(page.locator('#progress')).toHaveText(/^2 \//)
     const width = await evaluate(page, () => innerWidth)
     expect(await evaluate(page, () => document.scrollingElement!.scrollLeft)).toBe(width)
@@ -124,9 +173,9 @@ test.describe('general EPUB 2 (horizontal)', () => {
   test('turns pages by clicking the left / right side of the page', async ({ page }) => {
     const frame = page.locator('#viewer iframe')
     const box = (await frame.boundingBox())!
-    await page.mouse.click(box.x + box.width * 0.9, box.y + box.height / 2)
+    await click(page, box.x + box.width * 0.9, box.y + box.height / 2)
     await expect(page.locator('#progress')).toHaveText(/^2 \//)
-    await page.mouse.click(box.x + box.width * 0.1, box.y + box.height / 2)
+    await click(page, box.x + box.width * 0.1, box.y + box.height / 2)
     await expect(page.locator('#progress')).toHaveText(/^1 \//)
   })
 
@@ -142,7 +191,7 @@ test.describe('general EPUB 2 (horizontal)', () => {
 
   test('skips non-linear spine items', async ({ page }) => {
     const pages = await pageCount(page)
-    for (let i = 0; i < pages; i++) await page.keyboard.press('ArrowRight')
+    for (let i = 0; i < pages; i++) await press(page, 'ArrowRight')
     await expect.poll(() => heading(page)).toBe('Chapter 2')
   })
 
@@ -160,14 +209,14 @@ test('series example opens the next / previous episode at the book boundaries', 
 
   // Turn pages until the next episode opens.
   for (let i = 0; i < 20 && !(await status.textContent())?.includes('2 / 3'); i++) {
-    await page.keyboard.press('ArrowLeft')
+    await press(page, 'ArrowLeft')
   }
   await expect(status).toHaveText(/2 \/ 3 話/)
   await expect.poll(() => heading(page)).toBe('第2話　サンプル')
   await expect(page.locator('#viewer iframe')).toBeVisible() // key presses are ignored while loading
 
   // Going back opens the previous episode at its last page.
-  await page.keyboard.press('ArrowRight')
+  await press(page, 'ArrowRight')
   await expect(status).toHaveText(/1 \/ 3 話/)
   await expect.poll(() => heading(page)).toBe('第1話　サンプル')
   await expect(page.locator('#viewer iframe')).toBeVisible()

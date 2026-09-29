@@ -67,6 +67,7 @@ Windows の Git Bash から `docker` にコンテナ内パス（`/work` など�
 
 - **iframe の sandbox**: WebKit は `allow-scripts` なしの sandbox iframe では親から登録したイベントリスナーが発火しない。そのため `allow-same-origin allow-scripts` とし、書籍内のスクリプトは `Book` が各文書に挿入する CSP（`script-src 'none'`）で止めている。CSP を弱めると「does not run scripts in the book」テストが失敗する。
 - **iframe の背景**: 親ページと iframe 内の文書で `color-scheme` が異なると、ブラウザは iframe の背後を不透明な白で塗る（ダークモードで背景が白いままになる）。そのため iframe 内の `html` にテーマの背景色を直接塗っている。見た目の不具合は computed style では検出できないことがあるので、テストでは `pixel()` で実際の描画色を確認する。
+- **リモコン対応（チャタリング対策）**: ページ送りはリモコンでの操作も想定する。キーは「1 押下 1 ページ」で、押しっぱなしの判定は `event.repeat` ではなく keydown / keyup の自前管理で行う（リピートに repeat フラグを立てないリモコンがあるため）。加えて直前の操作から `cooldown`（100ms）以内の入力は無視する。意図的な速い連打を食わないよう、クールダウンは短く保つ。対象はユーザー入力（キー・クリック）だけで、`next()` などの API 呼び出しには掛けない。
 - **ページ分割**: `html` 要素を段組みコンテナにし、padding m + column-gap 2m で各段がページサイズの整数倍の位置から始まるようにしている。縦書きでは段が下方向に並ぶのでページ送りは `scrollTop`、横書きは `scrollLeft`。
 - **和文フォントとルビ**: Meiryo は字面に対して行の高さ（ascent + descent）が大きく、縦書きでルビが本文から離れる。フォントスタック（`fonts`）では游明朝・游ゴシックを Meiryo より優先する。
 - **スクリーンショットでの見た目確認（デバッグ用）**: Playwright イメージの既定のフォールバックフォントでは縦書きの漢字が重なって描画される（ライブラリの不具合ではない）。iframe 内で `font-family: IPAGothic` を指定するか、Windows のフォント（`C:/Windows/Fonts/*.ttf` など）を読み取り専用で `/usr/share/fonts/` にマウントして `fc-cache -f` してから撮る。フォントはコミットしない。
