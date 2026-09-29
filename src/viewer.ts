@@ -71,7 +71,7 @@ export interface EpubViewerEventMap {
   bookstart: Event
   /** A section document was loaded, before layout. Use it to inject styles or listeners. */
   sectionload: CustomEvent<{ index: number; doc: Document }>
-  /** An external link was clicked. Call preventDefault() to stop it from opening in a new tab. */
+  /** An external http(s): / mailto: link was clicked. Call preventDefault() to stop it from opening in a new tab. */
   link: CustomEvent<{ href: string }>
 }
 
@@ -426,7 +426,11 @@ export class EpubViewer extends EventTarget {
     const target = resolvePath(href, this.book!.sections[this.#index].href)
     if (target) {
       void this.goTo(target)
-    } else if (this.dispatchEvent(new CustomEvent('link', { detail: { href }, cancelable: true }))) {
+    } else if (
+      // Only web and mail links: a javascript: URL would run with the host page's origin.
+      /^(https?|mailto):/i.test(href) &&
+      this.dispatchEvent(new CustomEvent('link', { detail: { href }, cancelable: true }))
+    ) {
       this.#window.open(href, '_blank', 'noopener')
     }
   }

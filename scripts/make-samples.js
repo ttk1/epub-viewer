@@ -128,6 +128,7 @@ function generalEpub() {
     <item id="css" href="Styles/main.css" media-type="text/css"/>
     <item id="base-css" href="Styles/base.css" media-type="text/css"/>
     <item id="cover-image" href="Images/cover.svg" media-type="image/svg+xml"/>
+    <item id="probe" href="Images/probe.svg" media-type="image/svg+xml"/>
     <item id="ch1" href="Text/chapter1.xhtml" media-type="application/xhtml+xml"/>
     <item id="notes" href="Text/notes.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch2" href="Text/chapter%202.xhtml" media-type="application/xhtml+xml"/>
@@ -155,13 +156,20 @@ function generalEpub() {
     ['OEBPS/Styles/main.css', '@import url("base.css");\nh1 { color: #a33; }'],
     ['OEBPS/Styles/base.css', 'body { font-family: serif; line-height: 1.6; }'],
     ['OEBPS/Images/cover.svg', svg],
+    // Hostile content for security tests: must not run or navigate anywhere.
+    ['OEBPS/Images/probe.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>top.document.body.dataset.hacked = "svg"</script></svg>'],
     [
       'OEBPS/Text/chapter1.xhtml',
       xhtml(
         'Chapter 1',
         `<h1>Chapter 1</h1><p><img id="cover" src="../Images/cover.svg" alt="cover"/></p>
 <p><a id="to-2-1" href="chapter%202.xhtml#section-2-1">Go to section 2.1</a></p>
-<script>document.body.dataset.hacked = "1"</script>${paragraphs(1)}`,
+<p><a id="js-link" href="javascript:top.document.body.dataset.hacked='link'">Hostile link</a></p>
+<script>document.body.dataset.hacked = "1"</script>
+<meta http-equiv="refresh" content="1;url=https://example.invalid/"/>
+<iframe src="../Images/probe.svg" width="1" height="1"></iframe>
+<object data="../Images/probe.svg" width="1" height="1"></object>
+<embed src="../Images/probe.svg" width="1" height="1"/>${paragraphs(1)}`,
       ),
     ],
     ['OEBPS/Text/notes.xhtml', xhtml('Notes', '<h1>Notes</h1><p>Non-linear item.</p>')],

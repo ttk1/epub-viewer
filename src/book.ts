@@ -30,7 +30,10 @@ export interface TocItem {
 
 const BASE = 'https://epub.invalid/'
 const HTML_TYPES = ['application/xhtml+xml', 'text/html']
-const CSP = "default-src blob: data:; style-src blob: data: 'unsafe-inline'; script-src 'none'"
+// frame-src / object-src: an SVG from the archive embedded with <iframe>/<object>/<embed> is a
+// document of its own, same-origin with the host page, and WebKit does not pass this CSP down to it.
+const CSP =
+  "default-src blob: data:; style-src blob: data: 'unsafe-inline'; script-src 'none'; frame-src 'none'; object-src 'none'"
 
 /**
  * Resolves `href` relative to the archive path `base`.
@@ -168,6 +171,10 @@ export class Book {
     csp.setAttribute('http-equiv', 'Content-Security-Policy')
     csp.setAttribute('content', CSP)
     ;(doc.head ?? doc.documentElement).prepend(csp)
+    // CSP does not cover <meta http-equiv="refresh">, which could navigate the page anywhere.
+    for (const el of doc.querySelectorAll('meta[http-equiv]')) {
+      if (el.getAttribute('http-equiv')!.toLowerCase() === 'refresh') el.remove()
+    }
 
     const targets = [
       ['[src]', 'src'],

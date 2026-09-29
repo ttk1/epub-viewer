@@ -65,7 +65,12 @@ Windows の Git Bash から `docker` にコンテナ内パス（`/work` など�
 
 ## 設計メモ・ハマりどころ
 
-- **iframe の sandbox**: WebKit は `allow-scripts` なしの sandbox iframe では親から登録したイベントリスナーが発火しない。そのため `allow-same-origin allow-scripts` とし、書籍内のスクリプトは `Book` が各文書に挿入する CSP（`script-src 'none'`）で止めている。CSP を弱めると「does not run scripts in the book」テストが失敗する。
+- **iframe の sandbox と書籍の安全性**: WebKit は `allow-scripts` なしの sandbox iframe では親から登録したイベントリスナーが発火しない。そのため `allow-same-origin allow-scripts` とし、書籍内のスクリプトは `Book` が各文書に挿入する CSP で止めている。書籍の文書はホストと同一オリジンなので、スクリプトが動けばホストを操作できてしまう。以下は実際に再現を確認した穴で、`samples/general.epub` の攻撃用コンテンツとテストで守っている。
+  - `<iframe>` / `<object>` / `<embed>` で埋め込んだ SVG は別文書になり、WebKit では CSP が引き継がれずスクリプトが動く → CSP に `frame-src 'none'; object-src 'none'`
+  - `<meta http-equiv="refresh">` は CSP で止まらず、ページを外部へ移動できる → 書き換え時に削除
+  - `javascript:` のリンクを `window.open` するとホストのオリジンで実行される → 外部リンクは `http:` / `https:` / `mailto:` のみ開く
+  - 攻撃用ファイルはマニフェストに正しく登録すること（未登録だと MIME タイプが付かず、攻撃が成立しないまま「安全」と誤判定する）
+  - セキュリティ対策を変えたら、対策を一時的に外してテストが失敗することも確認する
 - **iframe の背景**: 親ページと iframe 内の文書で `color-scheme` が異なると、ブラウザは iframe の背後を不透明な白で塗る（ダークモードで背景が白いままになる）。そのため iframe 内の `html` にテーマの背景色を直接塗っている。見た目の不具合は computed style では検出できないことがあるので、テストでは `pixel()` で実際の描画色を確認する。
 - **リモコン対応（チャタリング対策）**: ページ送りはリモコンでの操作も想定する。キーは「1 押下 1 ページ」で、押しっぱなしの判定は `event.repeat` ではなく keydown / keyup の自前管理で行う（リピートに repeat フラグを立てないリモコンがあるため）。加えて直前の操作から `cooldown`（100ms）以内の入力は無視する。意図的な速い連打を食わないよう、クールダウンは短く保つ。対象はユーザー入力（キー・クリック）だけで、`next()` などの API 呼び出しには掛けない。
 - **ページ分割**: `html` 要素を段組みコンテナにし、padding m + column-gap 2m で各段がページサイズの整数倍の位置から始まるようにしている。縦書きでは段が下方向に並ぶのでページ送りは `scrollTop`、横書きは `scrollLeft`。

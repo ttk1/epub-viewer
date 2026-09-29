@@ -180,8 +180,20 @@ test.describe('general EPUB 2 (horizontal)', () => {
     expect(await evaluate(page, () => document.scrollingElement!.scrollLeft)).toBe(width)
   })
 
-  test('does not run scripts in the book', async ({ page }) => {
+  test('does not run scripts in the book, even in embedded SVG documents', async ({ page }) => {
+    await page.waitForTimeout(1500) // give embedded documents and the meta refresh time to act
     expect(await evaluate(page, () => document.body.dataset.hacked)).toBeUndefined()
+    expect(await page.evaluate(() => document.body.dataset.hacked)).toBeUndefined()
+    expect(content(page)).toBeTruthy() // not navigated away from the book by <meta http-equiv="refresh">
+  })
+
+  test('does not open javascript: links', async ({ page }) => {
+    let popups = 0
+    page.on('popup', () => popups++)
+    await content(page).locator('#js-link').click()
+    await page.waitForTimeout(500)
+    expect(popups).toBe(0)
+    expect(await page.evaluate(() => document.body.dataset.hacked)).toBeUndefined()
   })
 
   test('turns pages by clicking the left / right side of the page', async ({ page }) => {

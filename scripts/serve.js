@@ -34,15 +34,16 @@ function buildIfChanged() {
 }
 
 createServer(async (req, res) => {
-  let path = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname)
-  if (path === '/') return res.writeHead(302, { location: '/app/' }).end()
-  if (path.endsWith('/')) path += 'index.html'
-  if (build && path.endsWith('.html')) buildIfChanged()
   try {
-    const body = await readFile(join(process.cwd(), normalize(path))) // normalize() keeps it under cwd
+    let path = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname)
+    if (path === '/') return res.writeHead(302, { location: '/app/' }).end()
+    if (path.endsWith('/')) path += 'index.html'
+    if (build && path.endsWith('.html')) buildIfChanged()
+    // The pathname starts with "/", so normalize() resolves any "../" without leaving cwd.
+    const body = await readFile(join(process.cwd(), normalize(path)))
     res.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream', 'cache-control': 'no-store' })
     res.end(body)
   } catch {
-    res.writeHead(404).end('Not found')
+    res.writeHead(404).end('Not found') // also malformed URLs
   }
 }).listen(port, () => console.log(`Serving on http://localhost:${port}/app/`))

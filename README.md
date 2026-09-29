@@ -186,19 +186,20 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | `bookend` | – | 最後のページで `next()` した |
 | `bookstart` | – | 最初のページで `prev()` した |
 | `sectionload` | `{ index, doc }` | セクションの文書を読み込んだ（レイアウト前） |
-| `link` | `{ href }` | 外部リンクがクリックされた（キャンセル可能） |
+| `link` | `{ href }` | 外部リンク（`http:` / `https:` / `mailto:`）がクリックされた（キャンセル可能）。それ以外の URL（`javascript:` など）は開かない |
 
 TypeScript では `addEventListener` の `e.detail` に型が付きます。
 
 ## 対応範囲と制限
 
 - 対応: EPUB 2 / 3 のリフロー型、縦書き（`vertical-rl`）と横書き、ルビ、縦中横、目次（nav / NCX）、画像・CSS・フォントなど書籍内のリソース、`-epub-` 接頭辞付きの古い CSS プロパティ
-- 未対応: 固定レイアウト（漫画など）、見開き表示、右から左へ書く横書き（アラビア語など）、DRM 付きの EPUB、ZIP64（4GB 超）、書籍内のスクリプト（安全のため常に無効）
+- 未対応: 固定レイアウト（漫画など）、見開き表示、右から左へ書く横書き（アラビア語など）、DRM 付きの EPUB、ZIP64（4GB 超）、書籍内のスクリプトと、`<iframe>` / `<object>` / `<embed>` で埋め込まれた文書（安全のため常に無効）
 - ブラウザ: 最新の Chrome / Edge / Firefox / Safari（テストは Chromium / Firefox / WebKit で実施）
 
 ## セキュリティ
 
-- 書籍の各ページは sandbox 付きの iframe に表示し、Content-Security-Policy（`script-src 'none'`）を挿入して書籍内のスクリプトを実行させません。書籍の外部へのリソース読み込みも行いません。
+- 書籍の各ページは sandbox 付きの iframe に表示し、Content-Security-Policy を挿入して、書籍内のスクリプト・埋め込み文書（`<iframe>` など）・外部へのリソース読み込みを禁止しています。ページを別の URL へ移動させる `<meta http-equiv="refresh">` も取り除きます。
+- 書籍内のリンクは、本の中への移動か `http:` / `https:` / `mailto:` の外部リンクだけを扱い、`javascript:` などの URL は開きません。
 - ランタイム依存はありません。開発用の依存（TypeScript、Playwright）はバージョンとハッシュを固定し、公開から 7 日未満の版はインストールしない設定にしています（`.npmrc`）。
 
 ## 開発
