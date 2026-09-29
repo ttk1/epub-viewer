@@ -279,3 +279,7 @@ docker compose run --rm node npm run build     # dist/ を生成
 | `test/` | Playwright テスト |
 
 開発時の注意点やチェックリストは [CLAUDE.md](CLAUDE.md) にまとめています。
+
+## ライセンス
+
+[MIT](LICENSE)
