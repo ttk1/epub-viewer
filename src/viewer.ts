@@ -8,14 +8,28 @@ export interface Theme {
 
 export const themes = {
   light: { background: '#ffffff', color: '#1a1a1a', link: '#1a5fb4' },
-  dark: { background: '#1e1e1e', color: '#d4d4d4', link: '#8cb4ff' },
+  // Grey rather than white text: full white is glaring on a black page.
+  dark: { background: '#000000', color: '#acacac', link: '#7fa3d9' },
   sepia: { background: '#f4ecd8', color: '#5b4636', link: '#8a4b08' },
 } satisfies Record<string, Theme>
 
+/**
+ * Font stacks for Japanese text, covering macOS / iOS, Windows, Android and Linux.
+ * Meiryo comes after Yu Gothic: its tall line metrics push ruby away from vertical text.
+ */
+export const fonts = {
+  mincho:
+    '"Hiragino Mincho ProN", "Yu Mincho", YuMincho, "BIZ UDMincho", "Noto Serif JP", "Noto Serif CJK JP", "IPAexMincho", "IPAMincho", serif',
+  gothic:
+    '"Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic Medium", "Yu Gothic", YuGothic, Meiryo, "Noto Sans JP", "Noto Sans CJK JP", "IPAexGothic", "IPAGothic", sans-serif',
+}
+
 export interface ViewerOptions {
   theme: Theme
-  /** Font size multiplier (1 = book default). */
-  fontScale: number
+  /** CSS font-family that overrides the book's fonts, e.g. `fonts.mincho`. "" keeps the book's fonts. */
+  fontFamily: string
+  /** Base font size in CSS px. Text sized relatively (em, %) by the book scales with it. */
+  fontSize: number
   /** "auto" follows the book's CSS. */
   writingMode: 'auto' | 'vertical' | 'horizontal'
   /** Page margin in CSS px. */
@@ -70,7 +84,14 @@ export interface EpubViewer {
   removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void
 }
 
-const DEFAULTS: ViewerOptions = { theme: themes.light, fontScale: 1, writingMode: 'auto', margin: 32, keyboard: true }
+const DEFAULTS: ViewerOptions = {
+  theme: themes.light,
+  fontFamily: '',
+  fontSize: 16,
+  writingMode: 'auto',
+  margin: 32,
+  keyboard: true,
+}
 
 /**
  * Paginated EPUB renderer. Each section is shown in an iframe (scripts disabled) and split into
@@ -239,7 +260,7 @@ export class EpubViewer extends EventTarget {
   #layout(): void {
     const doc = this.#iframe.contentDocument
     if (!doc || !this.#style) return
-    const { theme, fontScale, writingMode, margin: m } = this.#options
+    const { theme, fontFamily, fontSize, writingMode, margin: m } = this.#options
     const { width, height } = this.#iframe.getBoundingClientRect()
     const [w, h] = [Math.floor(width), Math.floor(height)]
     this.#writingMode =
@@ -248,7 +269,7 @@ export class EpubViewer extends EventTarget {
     // The html element is the multi-column container. Padding m + column gap 2m makes every
     // column (= page) start exactly at a multiple of the page size.
     this.#style.textContent = `
-      html { line-height: 1.75; } /* default only; the book's own CSS wins */
+      html { line-height: 1.6; } /* default only; the book's own CSS wins */
       html {
         writing-mode: ${this.#writingMode} !important;
         box-sizing: border-box !important;
@@ -260,7 +281,7 @@ export class EpubViewer extends EventTarget {
         column-gap: ${2 * m}px !important;
         column-fill: auto !important;
         overflow: hidden !important;
-        font-size: ${fontScale * 100}% !important;
+        font-size: ${fontSize}px !important;
         color: ${theme.color} !important;
         /* Not transparent: browsers paint an opaque (white) backdrop behind an iframe whose
            color-scheme differs from the host page's, e.g. a dark host page. */
@@ -271,6 +292,7 @@ export class EpubViewer extends EventTarget {
         margin: 0 !important;
         background: transparent !important;
       }
+      ${fontFamily ? `body, body * { font-family: ${fontFamily} !important; }` : ''}
       body :not(a) { color: inherit !important; }
       a:link, a:visited { color: ${theme.link} !important; }
       img, svg, video {

@@ -18,7 +18,7 @@ async function pixel(page: Page, x: number, y: number): Promise<number[]> {
 }
 // Check rendered pixels: computed styles alone missed a white iframe backdrop in dark mode.
 const LIGHT = [255, 255, 255]
-const DARK = [30, 30, 30]
+const DARK = [0, 0, 0]
 async function pageBackground(page: Page): Promise<number[]> {
   const box = (await page.locator('#viewer iframe').boundingBox())!
   return pixel(page, box.x + 4, box.y + box.height - 4) // inside the page margin
@@ -65,7 +65,15 @@ test.describe('nepub-style EPUB (vertical)', () => {
   test('switches to dark mode', async ({ page }) => {
     await page.locator('#theme').selectOption('dark')
     await expect.poll(() => pageBackground(page)).toEqual(DARK)
-    expect(await evaluate(page, () => getComputedStyle(document.querySelector('p')!).color)).toBe('rgb(212, 212, 212)')
+    expect(await evaluate(page, () => getComputedStyle(document.querySelector('p')!).color)).toBe('rgb(172, 172, 172)')
+  })
+
+  test('switches between mincho and gothic fonts', async ({ page }) => {
+    const font = () => evaluate(page, () => getComputedStyle(document.querySelector('p')!).fontFamily)
+    await expect(page.locator('#font')).toHaveValue('mincho')
+    expect(await font()).toContain('Mincho')
+    await page.locator('#font').selectOption('gothic')
+    await expect.poll(font).toContain('Gothic')
   })
 
   test('follows the system color scheme by default', async ({ page }) => {
@@ -99,7 +107,8 @@ test.describe('general EPUB 2 (horizontal)', () => {
   test('loads resources, NCX table of contents and turns pages right', async ({ page }) => {
     expect(await evaluate(page, () => getComputedStyle(document.documentElement).writingMode)).toBe('horizontal-tb')
     expect(await evaluate(page, () => (document.getElementById('cover') as HTMLImageElement).naturalWidth)).toBe(200)
-    expect(await evaluate(page, () => getComputedStyle(document.body).fontFamily)).toBe('serif') // via @import
+    await page.locator('#font').selectOption('book') // keep the book's fonts
+    await expect.poll(() => evaluate(page, () => getComputedStyle(document.body).fontFamily)).toBe('serif') // via @import
     await expect(page.locator('#toc option')).toHaveText(['目次', 'Chapter 1', 'Chapter 2', '　Section 2.1'])
 
     await page.keyboard.press('ArrowRight')

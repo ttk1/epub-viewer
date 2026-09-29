@@ -1,9 +1,10 @@
 // Standalone reader app built on the library.
-import { EpubViewer, openBook, themes, type Book, type TocItem, type ViewerOptions } from '../src/index.ts'
+import { EpubViewer, fonts, openBook, themes, type Book, type TocItem, type ViewerOptions } from '../src/index.ts'
 
 interface Settings {
   theme: 'system' | 'light' | 'dark'
-  fontScale: number
+  font: 'mincho' | 'gothic' | 'book'
+  fontSize: number
   writingMode: ViewerOptions['writingMode']
 }
 
@@ -27,7 +28,8 @@ function save(key: string, value: unknown): void {
 const systemDark = matchMedia('(prefers-color-scheme: dark)')
 const settings: Settings = {
   theme: 'system',
-  fontScale: 1,
+  font: 'mincho',
+  fontSize: 45, // large enough to read comfortably at a distance
   writingMode: 'auto',
   ...load<Settings>(SETTINGS_KEY),
 }
@@ -43,8 +45,14 @@ function applySettings(): void {
   const theme = settings.theme === 'system' ? (systemDark.matches ? 'dark' : 'light') : settings.theme
   document.documentElement.dataset.theme = theme
   $<HTMLSelectElement>('theme').value = settings.theme
+  $<HTMLSelectElement>('font').value = settings.font
   $<HTMLSelectElement>('writing-mode').value = settings.writingMode
-  viewer.setOptions({ theme: themes[theme], fontScale: settings.fontScale, writingMode: settings.writingMode })
+  viewer.setOptions({
+    theme: themes[theme],
+    fontFamily: settings.font === 'book' ? '' : fonts[settings.font],
+    fontSize: settings.fontSize,
+    writingMode: settings.writingMode,
+  })
 }
 
 async function open(source: Blob | string): Promise<void> {
@@ -97,7 +105,7 @@ $<HTMLSelectElement>('toc').addEventListener('change', (e) => {
   select.value = ''
   select.blur() // give arrow keys back to page turning
 })
-const bindSelect = <K extends 'theme' | 'writingMode'>(id: string, key: K) =>
+const bindSelect = <K extends 'theme' | 'font' | 'writingMode'>(id: string, key: K) =>
   $<HTMLSelectElement>(id).addEventListener('change', (e) => {
     const select = e.target as HTMLSelectElement
     settings[key] = select.value as Settings[K]
@@ -105,14 +113,16 @@ const bindSelect = <K extends 'theme' | 'writingMode'>(id: string, key: K) =>
     applySettings()
   })
 bindSelect('theme', 'theme')
+bindSelect('font', 'font')
 bindSelect('writing-mode', 'writingMode')
 systemDark.addEventListener('change', applySettings) // follow OS changes while theme is "system"
-const changeFontScale = (delta: number) => {
-  settings.fontScale = Math.min(3, Math.max(0.5, Math.round((settings.fontScale + delta) * 10) / 10))
+// ×1.2 per step: equal-looking steps at any size.
+const changeFontSize = (ratio: number) => {
+  settings.fontSize = Math.min(120, Math.max(12, Math.round(settings.fontSize * ratio)))
   applySettings()
 }
-$('font-down').addEventListener('click', () => changeFontScale(-0.1))
-$('font-up').addEventListener('click', () => changeFontScale(0.1))
+$('font-down').addEventListener('click', () => changeFontSize(1 / 1.2))
+$('font-up').addEventListener('click', () => changeFontSize(1.2))
 // Keep focus off toolbar buttons so that Space turns pages instead of re-clicking the button.
 document.addEventListener('click', (e) => {
   if (e.target instanceof HTMLButtonElement) e.target.blur()

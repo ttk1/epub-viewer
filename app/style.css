@@ -5,9 +5,9 @@
   color-scheme: light;
 }
 :root[data-theme='dark'] {
-  --bg: #2a2a2a;
-  --fg: #d4d4d4;
-  --border: #444;
+  --bg: #161616;
+  --fg: #acacac;
+  --border: #333;
   color-scheme: dark;
 }
 * {

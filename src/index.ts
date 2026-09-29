@@ -1,6 +1,7 @@
 export { openBook, resolvePath, type Book, type BookSource, type Metadata, type Section, type TocItem } from './book.ts'
 export {
   EpubViewer,
+  fonts,
   themes,
   type EpubViewerEventMap,
   type Location,
