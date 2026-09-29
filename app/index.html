@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EPUB Viewer</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="../dist/app/main.js"></script>
+  </head>
+  <body>
+    <header id="toolbar">
+      <label class="button">開く<input id="file" type="file" accept=".epub,application/epub+zip" hidden /></label>
+      <select id="toc" aria-label="目次" disabled><option>目次</option></select>
+      <span id="title"></span>
+      <span id="progress"></span>
+      <button id="font-down" title="文字を小さく">A−</button>
+      <button id="font-up" title="文字を大きく">A＋</button>
+      <select id="writing-mode" title="表示方向">
+        <option value="auto">自動</option>
+        <option value="vertical">縦書き</option>
+        <option value="horizontal">横書き</option>
+      </select>
+      <select id="theme" title="テーマ">
+        <option value="system">システムに合わせる</option>
+        <option value="light">ライト</option>
+        <option value="dark">ダーク</option>
+      </select>
+    </header>
+    <main id="viewer"></main>
+    <p id="placeholder">EPUB ファイルを開くか、ここにドラッグ＆ドロップしてください</p>
+  </body>
+</html>
