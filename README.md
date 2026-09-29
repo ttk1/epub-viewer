@@ -280,6 +280,10 @@ docker compose run --rm node npm run build     # dist/ を生成
 
 開発時の注意点やチェックリストは [CLAUDE.md](CLAUDE.md) にまとめています。
 
+## 作成について
+
+このリポジトリのコードは、すべて [Claude Code](https://claude.com/claude-code)（Anthropic の AI コーディングツール）で作成しています。
+
 ## ライセンス
 
 [MIT](LICENSE)
