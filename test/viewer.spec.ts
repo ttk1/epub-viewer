@@ -65,6 +65,27 @@ test.describe('nepub-style EPUB (vertical)', () => {
     await expect(page.locator('.progress')).toHaveText(/^1 \//)
   })
 
+  test('turns one page per mouse wheel / trackpad gesture', async ({ page }) => {
+    const box = (await page.locator('iframe').boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    // Longer than the gap that ends a wheel gesture (150 ms).
+    const wheel = async (dx: number, dy: number) => {
+      await page.mouse.wheel(dx, dy)
+      await page.waitForTimeout(250)
+    }
+    await wheel(0, 100) // down: next page
+    await expect(page.locator('.progress')).toHaveText(/^2 \//)
+    await wheel(0, -100)
+    await expect(page.locator('.progress')).toHaveText(/^1 \//)
+    await wheel(-100, 0) // sideways to the left: next page for vertical books
+    await expect(page.locator('.progress')).toHaveText(/^2 \//)
+
+    // A trackpad swipe: many small events in a row turn only one page.
+    for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 8)
+    await page.waitForTimeout(250)
+    await expect(page.locator('.progress')).toHaveText(/^3 \//)
+  })
+
   test('keeps a separate reading position for each episode sharing a title', async ({ page }) => {
     await page.goto('/app/?url=/samples/episode-1.epub')
     await expect(page.locator('.progress')).toHaveText(/^1 \//)

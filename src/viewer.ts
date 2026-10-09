@@ -38,8 +38,10 @@ export interface ViewerOptions {
   maxWidth: number
   /** Turn pages with ←/→, ↑/↓, PageUp/PageDown and Space pressed anywhere in the host window. */
   keyboard: boolean
+  /** Turn pages with the mouse wheel / trackpad over the viewer: one page per wheel gesture. */
+  wheel: boolean
   /**
-   * Page-turn keys and clicks within this many ms of the previous accepted one are ignored, so that
+   * Page-turn keys, clicks and wheel gestures within this many ms of the previous accepted one are ignored, so that
    * chattering (e.g. remote controls) does not skip pages. Keep it short so fast deliberate presses still work.
    */
   cooldown: number
@@ -73,7 +75,7 @@ export interface EpubViewerEventMap {
   sectionload: CustomEvent<{ index: number; doc: Document }>
   /** An external http(s): / mailto: link was clicked. Call preventDefault() to stop it from opening in a new tab. */
   link: CustomEvent<{ href: string }>
-  /** A page turn by key or click failed (e.g. a broken section). Calls from code reject instead. */
+  /** A page turn by key, click or wheel failed (e.g. a broken section). Calls from code reject instead. */
   error: CustomEvent<{ error: unknown }>
 }
 
@@ -101,8 +103,14 @@ const DEFAULTS: ViewerOptions = {
   margin: 32,
   maxWidth: 0,
   keyboard: true,
+  wheel: true,
   cooldown: 100,
 }
+
+/** A wheel gesture ends when no wheel event comes for this many ms (trackpad momentum keeps sending them). */
+const WHEEL_GESTURE_GAP = 150
+/** Scroll distance in px within one gesture that turns a page, so that a resting finger on a trackpad does not. */
+const WHEEL_THRESHOLD = 10
 
 /**
  * Paginated EPUB renderer. Each section is shown in an iframe (scripts disabled) and split into
@@ -130,6 +138,8 @@ export class EpubViewer extends EventTarget {
   #busy = false
   readonly #pressedKeys = new Set<string>()
   #lastInputTurn = -Infinity
+  /** Current wheel gesture: scroll distance so far, whether it has turned a page, and its last event time. */
+  #wheel = { x: 0, y: 0, turned: false, last: -Infinity }
 
   /** `container` must have a size (e.g. width/height set by CSS); the viewer fills it. */
   constructor(container: HTMLElement, options: Partial<ViewerOptions> = {}) {
@@ -143,6 +153,7 @@ export class EpubViewer extends EventTarget {
     this.#iframe.style.cssText = 'display:block;width:100%;height:100%;margin:0 auto;border:0'
     container.append(this.#iframe)
     container.addEventListener('click', this.#onSideClick)
+    container.addEventListener('wheel', this.#onWheel, { passive: false })
     this.setOptions(options)
     this.#resizeObserver.observe(container)
     this.#listenKeys(this.#window, 'addEventListener')
@@ -204,6 +215,7 @@ export class EpubViewer extends EventTarget {
     this.#resizeObserver.disconnect()
     this.#listenKeys(this.#window, 'removeEventListener')
     this.#container.removeEventListener('click', this.#onSideClick)
+    this.#container.removeEventListener('wheel', this.#onWheel)
     this.#iframe.remove()
   }
 
@@ -282,6 +294,8 @@ export class EpubViewer extends EventTarget {
     ;(doc.head ?? doc.documentElement).append(this.#style)
     this.#listenKeys(doc.defaultView!, 'addEventListener')
     doc.addEventListener('click', this.#onClick)
+    // Wheel events over the page stay in the iframe; they don't reach the container.
+    doc.addEventListener('wheel', this.#onWheel, { passive: false })
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index: this.#index, doc } }))
   }
 
@@ -429,6 +443,28 @@ export class EpubViewer extends EventTarget {
     const { left, right } = this.#iframe.getBoundingClientRect()
     if (e.clientX < left) this.#inputTurn(this.goLeft)
     else if (e.clientX > right) this.#inputTurn(this.goRight)
+  }
+
+  /**
+   * One page per wheel gesture. A mouse wheel notch is a single event, but a trackpad swipe sends
+   * a stream of small ones followed by momentum, so the gesture is turned once and the rest ignored.
+   */
+  #onWheel = (e: WheelEvent): void => {
+    if (!this.#options.wheel || e.ctrlKey) return // Ctrl + wheel (and trackpad pinch) zooms
+    e.preventDefault() // keep the host page from scrolling
+    const wheel = this.#wheel
+    const now = performance.now()
+    if (now - wheel.last > WHEEL_GESTURE_GAP) Object.assign(wheel, { x: 0, y: 0, turned: false })
+    wheel.last = now
+    if (wheel.turned) return
+    const unit = e.deltaMode === 0 ? 1 : 100 // DOM_DELTA_PIXEL, or lines / pages (Firefox mouse wheel)
+    wheel.x += e.deltaX * unit
+    wheel.y += e.deltaY * unit
+    if (Math.max(Math.abs(wheel.x), Math.abs(wheel.y)) < WHEEL_THRESHOLD) return
+    wheel.turned = true
+    // Scrolling down goes forward; scrolling sideways moves the page that way, like the arrow keys.
+    if (Math.abs(wheel.x) > Math.abs(wheel.y)) this.#inputTurn(wheel.x > 0 ? this.goRight : this.goLeft)
+    else this.#inputTurn(wheel.y > 0 ? this.next : this.prev)
   }
 
   #followLink(href: string): void {
