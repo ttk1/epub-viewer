@@ -1,8 +1,9 @@
 // Generates sample EPUBs into samples/ for development and tests.
-//   nepub.epub        : same structure as EPUBs made by nepub (https://github.com/ttk1/nepub), 3 episodes
+//   nepub.epub        : same structure as EPUBs made by nepub (https://github.com/ttk1/nepub), 3 episodes,
+//                       each with a run of "…" longer than a page
 //   episode-{1,2,3}.epub : nepub-style, one episode each (for examples/series.html)
-//   general.epub      : EPUB 2 style (NCX, OEBPS/, horizontal English, image, @import, non-linear item),
-//                       plus hostile content and a last spine item missing from the archive
+//   general.epub      : EPUB 2 style (NCX, OEBPS/, horizontal English, image, @import, non-linear item,
+//                       long <pre> line), plus hostile content and a last spine item missing from the archive
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createZip } from './zip.js'
 
@@ -97,7 +98,13 @@ ${e.paragraphs.map((p) => `        <p>${p}</p>`).join('\n')}
   ])
 }
 
-const episode = (n) => ({ id: String(n), title: `第${n}話　サンプル`, paragraphs: japaneseParagraphs(n, 60) })
+// Web novels sometimes have a run of "…" longer than a page, which browsers do not break by themselves.
+const longEllipsis = `　長い沈黙${'…'.repeat(100)}が続いた。`
+const episode = (n) => ({
+  id: String(n),
+  title: `第${n}話　サンプル`,
+  paragraphs: [...japaneseParagraphs(n, 3), longEllipsis, ...japaneseParagraphs(n, 57)],
+})
 
 // ---- general EPUB 2 ----
 
@@ -167,6 +174,7 @@ function generalEpub() {
         'Chapter 1',
         `<h1>Chapter 1</h1><p><img id="cover" src="../Images/cover.svg" alt="cover"/></p>
 <p><a id="to-2-1" href="chapter%202.xhtml#section-2-1">Go to section 2.1</a></p>
+<pre id="long-pre">${'const longLine = 1; '.repeat(40)}</pre>
 <p><a id="js-link" href="javascript:top.document.body.dataset.hacked='link'">Hostile link</a></p>
 <script>document.body.dataset.hacked = "1"</script>
 <meta http-equiv="refresh" content="1;url=https://example.invalid/"/>

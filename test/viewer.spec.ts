@@ -183,6 +183,19 @@ test.describe('nepub-style EPUB (vertical)', () => {
     await expect(page.locator('.progress')).toHaveText(/^1 \//)
   })
 
+  test('breaks a run of "…" longer than a page instead of letting it run into the next page', async ({ page }) => {
+    const [lineLengths, pageHeight] = await evaluate(page, () => {
+      const p = [...document.querySelectorAll('p')].find((p) => p.textContent!.includes('…'.repeat(20)))!
+      const range = document.createRange()
+      range.selectNodeContents(p)
+      const { paddingTop, paddingBottom } = getComputedStyle(document.documentElement)
+      const pageHeight = innerHeight - parseFloat(paddingTop) - parseFloat(paddingBottom)
+      return [[...range.getClientRects()].map((r) => r.height), pageHeight] as const
+    })
+    expect(lineLengths.length).toBeGreaterThan(1)
+    for (const length of lineLengths) expect(length).toBeLessThanOrEqual(pageHeight + 1)
+  })
+
   test('larger font makes more pages', async ({ page }) => {
     const before = await pageCount(page)
     for (let i = 0; i < 5; i++) await page.locator('.font-up').click()
@@ -215,6 +228,15 @@ test.describe('general EPUB 2 (horizontal)', () => {
     await expect(page.locator('.progress')).toHaveText(/^2 \//)
     const width = await evaluate(page, () => innerWidth)
     expect(await evaluate(page, () => document.scrollingElement!.scrollLeft)).toBe(width)
+  })
+
+  test('wraps a long line in <pre> instead of letting it run into the next page', async ({ page }) => {
+    const [preWidth, pageWidth] = await evaluate(page, () => {
+      const { paddingLeft, paddingRight } = getComputedStyle(document.documentElement)
+      const pageWidth = innerWidth - parseFloat(paddingLeft) - parseFloat(paddingRight)
+      return [document.getElementById('long-pre')!.scrollWidth, pageWidth]
+    })
+    expect(preWidth).toBeLessThanOrEqual(pageWidth + 1)
   })
 
   test('does not run scripts in the book, even in embedded SVG documents', async ({ page }) => {
