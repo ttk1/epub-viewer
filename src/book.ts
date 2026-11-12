@@ -188,7 +188,7 @@ export class Book {
       // twice, as a document and as something else. Shown as it is, its scripts would run.
       blob = await this.#rewriteHtml(await blob.text(), path, HTML_TYPES.includes(type) ? type : HTML_TYPES[0])
     } else if (type === 'text/css') {
-      blob = new Blob([await this.#rewriteCss(await blob.text(), path)], { type })
+      blob = textBlob(await this.#rewriteCss(await blob.text(), path), type)
     }
     const url = URL.createObjectURL(blob)
     if (this.#destroyed) URL.revokeObjectURL(url)
@@ -251,14 +251,14 @@ export class Book {
         el.setAttribute('style', await this.#rewriteCss(el.getAttribute('style')!, path))
       }),
     ])
-    if (type !== 'text/html') return new Blob([new XMLSerializer().serializeToString(doc)], { type })
+    if (type !== 'text/html') return textBlob(new XMLSerializer().serializeToString(doc), type)
     const html = `<!DOCTYPE html>${doc.documentElement.outerHTML}`
     // HTML does not always read back as it was written: text or a comment can come back as an
     // element (e.g. a <meta> that takes the page elsewhere). Nothing is shown of a document in
     // which something that was removed above is there again.
     const again = parse(type, html)
     const unsafe = again.querySelector(UNSAFE_ELEMENTS) ?? [...again.querySelectorAll('meta[http-equiv]')].find(isRefresh)
-    return new Blob([unsafe ? `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">` : html], { type })
+    return textBlob(unsafe ? `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">` : html, type)
   }
 
   async #rewriteCss(css: string, path: string): Promise<string> {
@@ -322,6 +322,14 @@ function parseXml(source: string): Document {
  */
 const UNSAFE_ELEMENTS = 'noscript, template'
 const isRefresh = (meta: Element) => meta.getAttribute('http-equiv')!.trim().toLowerCase() === 'refresh'
+
+/**
+ * A file of rewritten text. Marked as UTF-8 by a byte order mark, which browsers take over what
+ * the text says about itself: a document that declares another encoding (e.g. <meta charset>)
+ * would otherwise be read in that one, and not be the document that was rewritten. In ISO-2022-JP,
+ * for one, escape sequences can make the CSP <meta> part of an attribute, and so remove it.
+ */
+const textBlob = (text: string, type: string) => new Blob(['\uFEFF', text], { type: `${type};charset=utf-8` })
 
 // Namespace-agnostic helpers (OPF/NCX/XHTML use various prefixes).
 const all = (node: Document | Element, name: string) => [...node.getElementsByTagNameNS('*', name)]
