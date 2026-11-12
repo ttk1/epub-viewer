@@ -280,7 +280,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | `sections` | 読む順のセクション一覧 `{ href, linear, size, spread? }[]`。`linear: false` はページ送りで飛ばされる。固定レイアウトでは 1 セクションが 1 ページで、`spread` は見開きでの位置（`'left'` / `'right'` / `'center'`、本に指定があるときだけ） |
 | `toc` | 目次 `{ label, href, children }[]`（EPUB 3 の nav、なければ EPUB 2 の NCX） |
 | `loadCover()` | 表紙画像の `Blob`（なければ `undefined`）を `Promise` で返す。本棚のサムネイルなどに |
-| `getUrl(path)` | アーカイブ内ファイルの blob: URL を `Promise` で返す。画像・スタイル・フォントとして使うためのもので、セクション以外のファイルの URL を iframe や新しいタブで開いてはいけない（SVG などに入ったスクリプトがページの権限で動く） |
+| `getUrl(path)` | アーカイブ内ファイルの URL を `Promise` で返す。画像・スタイル・フォントとして使うためのもの。スクリプトを含みうる種類（SVG など）は `data:` URL、それ以外は blob: URL になる |
 | `destroy()` | 作成した blob: URL を解放する。本を閉じるときに呼ぶ。以後 `getUrl()` は失敗する |
 
 ### `new EpubViewer(container, options?)`
@@ -376,6 +376,7 @@ TypeScript 用に次の型も export しています: `BookSource`（`openBook()
 ## セキュリティ
 
 - 書籍の各ページは sandbox 付きの iframe に表示し、Content-Security-Policy を挿入して、書籍内のスクリプト・埋め込み文書（`<iframe>` など）・外部へのリソース読み込みを禁止しています。ページを別の URL へ移動させる `<meta http-equiv="refresh">` と、文書を置き換える `<?xml-stylesheet?>` も取り除きます。本文として表示するのは XHTML / HTML の文書だけで、マニフェストがそのファイルを別の種類としても登録していても、必ずこの保護を掛けてから表示します。保護をすり抜ける手段になる `<noscript>` と `<template>` は取り除き、文書は UTF-8 として読ませます（書籍が宣言する別の文字コードでは読ませません）。それでも書籍がページを別の場所へ移動させた場合は、そのページを表示せずに `error` イベントで知らせます。
+- 書籍内の SVG など、スクリプトを含みうるファイルには、ページと同じオリジンを持つ blob: URL を使いません（読者が画像を新しいタブで開いても、中のスクリプトがページの権限で動かないように）。
 - ZIP の展開は、ファイルごとに宣言されたサイズを超えた時点で打ち切ります（小さなデータが巨大に膨らむ細工への対策）。
 - 書籍内のリンク（SVG 内のリンクや `<area>` を含む）は、本の中への移動か `http:` / `https:` / `mailto:` の外部リンクだけを扱い、`javascript:` などの URL は開きません。リンクのクリックはすべてビューアが受け取り、ブラウザに直接たどらせません。
 - ランタイム依存はありません。開発用の依存（TypeScript、Playwright）はバージョンとハッシュを固定し、公開から 7 日未満の版はインストールしない設定にしています（`.npmrc`）。

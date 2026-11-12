@@ -156,12 +156,10 @@ export class Book {
   }
 
   /**
-   * Returns a blob: URL for a file in the archive. HTML and CSS are rewritten so that
+   * Returns a URL (blob:) for a file in the archive, to use it as an image, a style sheet or a font. HTML and CSS are rewritten so that
    * their references (images, stylesheets, fonts) also point to blob: URLs.
    *
-   * Only the sections are made safe to show as documents (their scripts are blocked). Do not load
-   * the URL of any other file into a frame or a new tab: an SVG image, for one, can hold scripts,
-   * which would run with the origin of your page. Using them as images, styles or fonts is fine.
+   * Files that can hold scripts (e.g. SVG images) get a data: URL instead: see #createUrl.
    */
   getUrl(path: string): Promise<string> {
     if (this.#destroyed) return Promise.reject(new Error('The book has been closed'))
@@ -183,12 +181,23 @@ export class Book {
   async #createUrl(path: string): Promise<string> {
     const type = this.#types.get(path) ?? ''
     let blob = await this.#zip.read(path, type)
+    const rewritten = this.#documents.has(path) || HTML_TYPES.includes(type) || type === 'text/css'
     if (this.#documents.has(path) || HTML_TYPES.includes(type)) {
       // A section is rewritten whatever the manifest calls it elsewhere: a file can be listed
       // twice, as a document and as something else. Shown as it is, its scripts would run.
       blob = await this.#rewriteHtml(await blob.text(), path, HTML_TYPES.includes(type) ? type : HTML_TYPES[0])
     } else if (type === 'text/css') {
       blob = textBlob(await this.#rewriteCss(await blob.text(), path), type)
+    }
+    // A blob: URL has the origin of the page. The reader can open any file of the book as a page
+    // of its own (e.g. "open image in new tab"), where the scripts of an SVG would run with that
+    // origin. So only files that cannot hold scripts get one, and the rest a data: URL, which
+    // has an origin of its own.
+    if (!rewritten && !INERT_TYPES.test(type)) {
+      const reader = new FileReader()
+      reader.readAsDataURL(blob)
+      await new Promise((resolve, reject) => Object.assign(reader, { onload: resolve, onerror: reject }))
+      return reader.result as string
     }
     const url = URL.createObjectURL(blob)
     if (this.#destroyed) URL.revokeObjectURL(url)
@@ -321,6 +330,8 @@ function parseXml(source: string): Document {
  * <noscript> is text when shown, and a <template> can become a shadow root.
  */
 const UNSAFE_ELEMENTS = 'noscript, template'
+/** Types of files that cannot hold scripts, whatever is in them: bitmap images, fonts, audio and video. */
+const INERT_TYPES = /^(image\/(png|jpeg|gif|webp|avif|bmp)|font\/|application\/(font-|x-font-|vnd\.ms-opentype)|audio\/|video\/)/
 const isRefresh = (meta: Element) => meta.getAttribute('http-equiv')!.trim().toLowerCase() === 'refresh'
 
 /**

@@ -27,8 +27,19 @@ test.describe('general EPUB 2 (horizontal)', () => {
       getComputedStyle(document.getElementById('inline-style')!).backgroundImage,
       document.getElementById('svg-image')!.getAttribute('xlink:href'),
     ])
-    for (const url of urls) expect(url).toContain('blob:')
+    // The image is an SVG, which gets a data: URL (see the next test).
+    for (const url of urls) expect(url).toMatch(/^(url\(")?data:image\/svg\+xml/)
     expect(await evaluate(page, () => (document.getElementById('srcset') as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  })
+
+  test('gives files that can hold scripts a URL that does not have the origin of the page', async ({ page }) => {
+    // Opened as a page of its own (e.g. "open image in new tab"), an SVG with a blob: URL would run its scripts as the host.
+    const cover = await evaluate(page, () => (document.getElementById('cover') as HTMLImageElement).src)
+    expect(cover).toMatch(/^data:image\/svg\+xml/)
+    // What cannot hold scripts keeps the cheaper blob: URL.
+    await page.goto('/app/?url=/samples/nepub.epub')
+    await expect(page.locator('.progress')).toHaveText(/^1 \//)
+    expect(await evaluate(page, () => document.querySelector('img')!.src)).toMatch(/^blob:/)
   })
 
   test('wraps a long line in <pre> instead of letting it run into the next page', async ({ page }) => {
