@@ -187,9 +187,10 @@ viewer.addEventListener('link', (e) => {
 // ユーザーの操作（ページ送り・書籍内のリンク・EpubReader の目次）での移動が失敗した（壊れたセクションなど）ときの通知
 viewer.addEventListener('error', (e) => showMessage(`表示できませんでした: ${e.detail.error}`))
 
-// ページの中央のクリック・タップ。ツールバーやメニューの出し入れなどに
-viewer.addEventListener('tap', () => {
-  reader.toolbar.hidden = !reader.toolbar.hidden // EpubReader のツールバーを隠すと、その分ページが広がる
+// ページの中央のクリック・タップ。メニューの出し入れなどに。
+// EpubReader なら、ツールバーを隠すとその分ページが広がる
+reader.viewer.addEventListener('tap', () => {
+  reader.toolbar.hidden = !reader.toolbar.hidden
 })
 
 // キー操作をアプリ側で制御したい場合

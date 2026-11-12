@@ -740,6 +740,45 @@ test('a click on the middle of the page is reported as a tap, one on the side tu
   expect(await page.evaluate(() => document.body.dataset.taps)).toBe(' 0.50') // only the first click
 })
 
+test('goTo({ fraction }) moves to a position in the whole book, as reported by relocate', async ({ page }) => {
+  await page.goto('/app/')
+  const results = await page.evaluate(async () => {
+    const { EpubViewer, openBook } = await import('/dist/src/index.js' as string)
+    const container = document.createElement('div')
+    container.style.cssText = 'position: fixed; inset: 0'
+    document.body.append(container)
+    const viewer = new EpubViewer(container, { fontSize: 40 })
+    let detail: any
+    viewer.addEventListener('relocate', (e: CustomEvent) => (detail = e.detail))
+    const at = async (fraction: number) => {
+      await viewer.goTo({ fraction })
+      return { index: detail.index, page: detail.page, pages: detail.pages, fraction: detail.fraction }
+    }
+    await viewer.open(await openBook('/samples/nepub.epub'))
+    const text = { start: await at(0), middle: await at(0.5), end: await at(1) }
+    // Every page is found again from the fraction that it reports.
+    const mismatches: unknown[] = []
+    for (let i = 0; i < 40; i++) {
+      await viewer.next()
+      const reported = { ...detail }
+      const found = await at(reported.fraction)
+      if (found.index !== reported.index || found.page !== reported.page) mismatches.push([reported, found])
+    }
+    await viewer.open(await openBook('/samples/fixed.epub'))
+    const pages = { start: await at(0), middle: await at(0.5), end: await at(1) }
+    return { text, pages, mismatches }
+  })
+  expect(results.text.start).toMatchObject({ index: 0, page: 0 })
+  expect(results.text.middle.index).toBe(1) // the second of three episodes of the same length
+  expect(results.text.middle.fraction).toBeCloseTo(0.5, 1)
+  expect(results.text.end).toMatchObject({ index: 2, fraction: 1 })
+  expect(results.text.end.page).toBe(results.text.end.pages - 1)
+  expect(results.mismatches).toEqual([])
+  expect(results.pages.start).toMatchObject({ index: 0 })
+  expect(results.pages.middle).toMatchObject({ index: 1, fraction: 0.5 }) // the spread of pages 2 and 3, of 6
+  expect(results.pages.end).toMatchObject({ index: 5, fraction: 1 })
+})
+
 test('with click: false, clicks do not turn pages but links still work', async ({ page }) => {
   await page.goto('/app/')
   // A viewer of its own, over the (empty) app.
@@ -778,6 +817,13 @@ test('EpubReader.setSettings() changes and saves settings like the toolbar does'
   expect(JSON.parse(settings.saved)).toEqual({ theme: 'sepia', fontSize: 30 })
   await expect(page.locator('input[name=theme]:checked')).toHaveValue('sepia')
   await expect(page.locator('.font-size')).toHaveText('30')
+
+  // The app may hide the toolbar (e.g. on a tap); the page then takes its room.
+  const height = () => page.locator('.viewer').evaluate((viewer) => viewer.getBoundingClientRect().height)
+  expect(await height()).toBeLessThan(720)
+  await page.locator('.toolbar').evaluate((toolbar) => ((toolbar as HTMLElement).hidden = true))
+  await expect(page.locator('.toolbar')).toBeHidden()
+  expect(await height()).toBe(720)
 })
 
 test('EpubReader shows the book opened last, even when an earlier one takes longer to load', async ({ page }) => {
