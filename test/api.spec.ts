@@ -1,6 +1,6 @@
 // The API as an embedding app uses it: a viewer or a reader made by the test itself.
 import { expect, test, type Page } from '@playwright/test'
-import { content, evaluate, heading, click } from './helpers.ts'
+import { content, evaluate, heading, click, press } from './helpers.ts'
 
 test('a click on the middle of the page is reported as a tap, one on the side turns the page', async ({ page }) => {
   await page.goto('/app/')
@@ -422,6 +422,81 @@ test('controls that the app adds to the toolbar keep the focus that they are giv
   await expect(page.locator('.toolbar input[type=search]')).toBeFocused()
   await expect(page.locator('.toolbar input[type=search]')).toHaveValue('abc ') // the keys go to the field, not to page turns
   await expect(page.locator('.progress')).toHaveText(/^1 \//)
+})
+
+test('a site of one EPUB per episode can be made with EpubReader alone', async ({ page }) => {
+  // What such a site does with the reader, under the Content-Security-Policy that it sends: its own
+  // link and status in the toolbar, its own title, a key of its own for each episode, the next and
+  // the previous episode at the ends of the book, and the saved positions of other episodes removed.
+  const csp =
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src blob: data:; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'self'"
+  // A page of its own: on the page of the app, the viewer of the app would take the keys first.
+  await page.route('**/site.html', (route) =>
+    route.fulfill({ contentType: 'text/html', headers: { 'content-security-policy': csp }, body: '<!doctype html><meta charset="utf-8"><body style="margin: 0"><div id="reader" style="height: 100vh"></div>' }),
+  )
+  await page.goto('/site.html')
+  await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const reader = new EpubReader(document.getElementById('reader')!, { storageKey: 'site' })
+    const title = reader.toolbar.querySelector('.title')!
+    const status = document.createElement('span')
+    status.className = 'status'
+    title.after(status)
+    reader.toolbar.prepend(Object.assign(document.createElement('a'), { href: '/', textContent: 'トップ' }))
+    let current = 0
+    let loading = false
+    async function show(episode: number, location?: object) {
+      status.textContent = '読み込み中…'
+      const response = await fetch(`/samples/episode-${episode}.epub`)
+      if (!response.ok) throw new Error('最新話です')
+      const book = await reader.open(await response.blob(), { key: `novel:${episode}`, location })
+      current = episode
+      title.textContent = `${book.metadata.title}　${book.toc[0]?.label ?? ''}`
+      // Only the position of the episode being read is kept.
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith('site:position:novel:') && key !== `site:position:novel:${episode}`) localStorage.removeItem(key)
+      }
+      status.textContent = ''
+    }
+    async function turn(forward: boolean) {
+      if (loading) return
+      loading = true
+      await show(current + (forward ? 1 : -1), forward ? { index: 0, progress: 0 } : { index: -1, progress: 1 }).catch((error) => (status.textContent = error.message))
+      loading = false
+    }
+    reader.viewer.addEventListener('bookend', () => void turn(true))
+    reader.viewer.addEventListener('bookstart', () => void turn(false))
+    ;(window as any).reader = reader
+    await show(1)
+  })
+  const reader = (use: string) => page.evaluate(`(async () => { const { viewer } = window.reader; return ${use} })()`)
+  await expect(page.locator('.title')).toHaveText('連載サンプル　第1話　サンプル')
+  await expect(page.locator('.toolbar > a')).toHaveText('トップ')
+  await expect(page.locator('.toc')).toBeHidden() // an episode has a single entry: no table of contents to show
+
+  // Past the last page: the next episode, from its start.
+  await reader('viewer.goTo({ index: -1, progress: 1 })')
+  await press(page, 'ArrowLeft')
+  await expect(page.locator('.title')).toHaveText('連載サンプル　第2話　サンプル')
+  await expect(page.locator('.pages')).toHaveText(/^1 \//)
+  // Back past its first page: the episode before, at its last page.
+  await press(page, 'ArrowRight')
+  await expect(page.locator('.title')).toHaveText('連載サンプル　第1話　サンプル')
+  expect(await reader('viewer.location.progress > 0')).toBe(true)
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.includes('position')))).toEqual(['site:position:novel:1'])
+
+  // Past the last episode: the reader stays where it is, and the site says so.
+  await reader('viewer.goTo({ fraction: 1 })')
+  for (const episode of [2, 3]) {
+    await press(page, 'ArrowLeft')
+    await expect(page.locator('.title')).toHaveText(`連載サンプル　第${episode}話　サンプル`)
+    await reader('viewer.goTo({ fraction: 1 })')
+  }
+  await press(page, 'ArrowLeft')
+  await expect(page.locator('.status')).toHaveText('最新話です')
+  await expect(page.locator('.title')).toHaveText('連載サンプル　第3話　サンプル')
+  await press(page, 'ArrowRight') // and still turns pages
+  expect(await reader('viewer.location.progress < 1 && viewer.location.index >= 0')).toBe(true)
 })
 
 test('EpubReader shows the book opened last, even when an earlier one takes longer to load', async ({ page }) => {
