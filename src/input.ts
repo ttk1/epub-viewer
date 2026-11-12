@@ -146,12 +146,11 @@ export class Input {
     // animation can give one to an SVG <a>), and other elements with an href (in any namespace).
     // The default is always prevented: the frame must not go anywhere by itself.
     const link = (e.target as Element).closest?.('a, area, [*|href]')
-    if (link) {
-      e.preventDefault()
-      const href = link.getAttribute('href') ?? link.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
-      if (href != null) this.#host.followLink(href, doc)
-      return
-    }
+    if (link) e.preventDefault()
+    // Only <a> and <area> are links to follow. Other elements have an href for what they show
+    // (<image> and <use> in SVG: a page is often one <image>), and are clicked like the rest of the page.
+    const href = link?.matches('a, area') ? (link.getAttribute('href') ?? link.getAttributeNS('http://www.w3.org/1999/xlink', 'href')) : null
+    if (href != null) return this.#host.followLink(href, doc)
     if (this.#selecting(doc)) return
     // The position on the screen: the frame may be scaled, or one of two.
     const frame = doc.defaultView!.frameElement!
