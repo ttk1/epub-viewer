@@ -1,10 +1,13 @@
 // Generates sample EPUBs into samples/ for development and tests.
-//   nepub.epub        : same structure as EPUBs made by nepub (https://github.com/ttk1/nepub), 3 episodes,
-//                       each with a run of "…" longer than a page
+//   nepub.epub        : same structure as EPUBs made by nepub (https://github.com/ttk1/nepub): 3 episodes
+//                       in 2 chapters, each with an illustration, emphasis dots, an empty line and a
+//                       run of "…" longer than a page
 //   episode-{1,2,3}.epub : nepub-style, one episode each (for examples/series.html)
 //   general.epub      : EPUB 2 style (NCX, OEBPS/, horizontal English, image, @import, non-linear item,
-//                       long <pre> line), plus hostile content and a last spine item missing from the archive
+//                       long <pre> line), plus broken and hostile content and a last spine item missing
+//                       from the archive
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { crc32, deflateSync } from 'node:zlib'
 import { createZip } from './zip.js'
 
 const container = (opfPath) => `<?xml version="1.0"?>
@@ -28,7 +31,34 @@ span.tcy {
 	-webkit-writing-mode: horizontal-tb;
 	-epub-writing-mode: horizontal-tb;
 	line-height: 1;
+}
+em.emphasis-dots {
+	font-style: normal;
+	text-emphasis-style: sesame;
+	-webkit-text-emphasis-style: sesame;
+	-epub-text-emphasis-style: sesame;
 }`
+
+/** A plain single-color PNG, standing in for an illustration. */
+function png(width, height, [r, g, b]) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data])
+    const out = Buffer.alloc(body.length + 8)
+    out.writeUInt32BE(data.length, 0)
+    body.copy(out, 4)
+    out.writeUInt32BE(crc32(body), body.length + 4)
+    return out
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header.set([8, 2], 8) // 8 bits per channel, RGB
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, Buffer.from([r, g, b]))])
+  const pixels = deflateSync(Buffer.concat(Array.from({ length: height }, () => row)))
+  return Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', header), chunk('IDAT', pixels), chunk('IEND', Buffer.alloc(0))])
+}
+// Portrait, and larger than a page, like the illustrations of web novels.
+const illustration = { id: 'image1', name: 'image1.png', type: 'image/png', data: png(800, 1200, [74, 144, 217]) }
 
 const japaneseParagraphs = (episode, count) =>
   Array.from({ length: count }, (_, i) => {
@@ -40,8 +70,11 @@ const japaneseParagraphs = (episode, count) =>
     ].join('')
   })
 
-function nepubEpub(title, episodes) {
+/** `chapters`: [{ name, episodes }]. As in nepub, episodes of the chapter named "default" are listed without a chapter. */
+function nepubEpub(title, chapters) {
   const esc = (s) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+  const episodes = chapters.flatMap((chapter) => chapter.episodes)
+  const images = [illustration]
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" xml:lang="ja">
     <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -56,20 +89,38 @@ function nepubEpub(title, episodes) {
         <item media-type="text/css" id="style" href="style.css" />
         <item media-type="application/json" id="metadata" href="metadata.json" />
 ${episodes.map((e) => `        <item media-type="application/xhtml+xml" id="${e.id}" href="text/${e.id}.xhtml" />`).join('\n')}
+${images.map((image) => `        <item media-type="${image.type}" id="${image.id}" href="image/${image.name}" />`).join('\n')}
     </manifest>
     <spine page-progression-direction="rtl">
 ${episodes.map((e) => `        <itemref linear="yes" idref="${e.id}" />`).join('\n')}
     </spine>
 </package>`
+  const navItem = (e, indent) => `${indent}<li>
+${indent}    <a href="text/${e.id}.xhtml">${esc(e.title)}</a>
+${indent}</li>`
   const nav = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="ja">
-    <head><meta charset="UTF-8" /><title>Navigation</title></head>
+    <head>
+        <meta charset="UTF-8" />
+        <title>Navigation</title>
+    </head>
     <body>
         <nav epub:type="toc">
             <h1>Navigation</h1>
             <ol>
-${episodes.map((e) => `                <li><a href="text/${e.id}.xhtml">${esc(e.title)}</a></li>`).join('\n')}
+${chapters
+  .map((chapter) =>
+    chapter.name === 'default'
+      ? chapter.episodes.map((e) => navItem(e, ' '.repeat(16))).join('\n')
+      : `                <li>
+                    <a href="text/${chapter.episodes[0].id}.xhtml">${esc(chapter.name)}</a>
+                    <ol>
+${chapter.episodes.map((e) => navItem(e, ' '.repeat(24))).join('\n')}
+                    </ol>
+                </li>`,
+  )
+  .join('\n')}
             </ol>
         </nav>
     </body>
@@ -89,21 +140,28 @@ ${e.paragraphs.map((p) => `        <p>${p}</p>`).join('\n')}
 </html>`
   return createZip([
     ['mimetype', 'application/epub+zip', true],
+    ...images.map((image) => [`src/image/${image.name}`, image.data]),
+    ...episodes.map((e) => [`src/text/${e.id}.xhtml`, text(e)]),
     ['META-INF/container.xml', container('src/content.opf')],
-    ['src/content.opf', opf],
     ['src/style.css', nepubStyle],
+    ['src/content.opf', opf],
     ['src/navigation.xhtml', nav],
     ['src/metadata.json', '{}'],
-    ...episodes.map((e) => [`src/text/${e.id}.xhtml`, text(e)]),
   ])
 }
 
 // Web novels sometimes have a run of "…" longer than a page, which browsers do not break by themselves.
 const longEllipsis = `　長い沈黙${'…'.repeat(100)}が続いた。`
+// What nepub makes of an empty line, emphasis dots and an illustration.
+const markup = [
+  '<br />',
+  '　これは<em class="emphasis-dots">傍点</em>の付いた文です。',
+  `<img alt="挿絵" src="../image/${illustration.name}"/>`,
+]
 const episode = (n) => ({
   id: String(n),
   title: `第${n}話　サンプル`,
-  paragraphs: [...japaneseParagraphs(n, 3), longEllipsis, ...japaneseParagraphs(n, 57)],
+  paragraphs: [...japaneseParagraphs(n, 3), longEllipsis, ...japaneseParagraphs(n, 20), ...markup, ...japaneseParagraphs(n, 37)],
 })
 
 // ---- general EPUB 2 ----
@@ -122,6 +180,8 @@ function generalEpub() {
 <body>${body}</body>
 </html>`
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect width="200" height="120" fill="#4a90d9"/><text x="100" y="68" font-size="24" text-anchor="middle" fill="#fff">Sample</text></svg>`
+  const hack = (by) => `<script>top.document.body.dataset.hacked = "${by}"</script>`
+  const xslt = `<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"><html xmlns="http://www.w3.org/1999/xhtml"><body><h1>XSLT</h1>${hack('xslt')}</body></html></xsl:template></xsl:stylesheet>`
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
@@ -141,10 +201,22 @@ function generalEpub() {
     <item id="notes" href="Text/notes.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch2" href="Text/chapter%202.xhtml" media-type="application/xhtml+xml"/>
     <item id="missing" href="Text/missing.xhtml" media-type="application/xhtml+xml"/>
+    <item id="malformed" href="http://[" media-type="text/plain"/>
+    <item id="cycle-a" href="Styles/cycle-a.css" media-type="text/css"/>
+    <item id="cycle-b" href="Styles/cycle-b.css" media-type="text/css"/>
+    <item id="cyclic" href="Text/cyclic.xhtml" media-type="application/xhtml+xml"/>
+    <item id="nohead" href="Text/nohead.xhtml" media-type="application/xhtml+xml"/>
+    <item id="svgroot" href="Text/svgroot.xhtml" media-type="application/xhtml+xml"/>
+    <item id="xslt" href="Text/xslt.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine toc="ncx">
     <itemref idref="ch1"/>
     <itemref idref="notes" linear="no"/>
+    <itemref idref="cyclic" linear="no"/>
+    <itemref idref="probe" linear="no"/>
+    <itemref idref="nohead" linear="no"/>
+    <itemref idref="svgroot" linear="no"/>
+    <itemref idref="xslt" linear="no"/>
     <itemref idref="ch2"/>
     <itemref idref="missing"/>
   </spine>
@@ -163,7 +235,8 @@ function generalEpub() {
     ['META-INF/container.xml', container('OEBPS/content.opf')],
     ['OEBPS/content.opf', opf],
     ['OEBPS/toc.ncx', ncx],
-    ['OEBPS/Styles/main.css', '@import url("base.css");\nh1 { color: #a33; }'],
+    // url(#marker) refers to the document itself, not to a file in the archive.
+    ['OEBPS/Styles/main.css', '@import url("base.css");\nh1 { color: #a33; }\npath { marker-start: url(#marker); }'],
     ['OEBPS/Styles/base.css', 'body { font-family: serif; line-height: 1.6; }'],
     ['OEBPS/Images/cover.svg', svg],
     // Hostile content for security tests: must not run or navigate anywhere.
@@ -174,8 +247,14 @@ function generalEpub() {
         'Chapter 1',
         `<h1>Chapter 1</h1><p><img id="cover" src="../Images/cover.svg" alt="cover"/></p>
 <p><a id="to-2-1" href="chapter%202.xhtml#section-2-1">Go to section 2.1</a></p>
+<p id="inline-style" style="background-image: url(../Images/cover.svg)"><img id="srcset" src="../Images/cover.svg" srcset="../Images/cover.svg 2x" width="50" alt=""/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="50" height="30"><image id="svg-image" width="50" height="30" xlink:href="../Images/cover.svg"/></svg></p>
 <pre id="long-pre">${'const longLine = 1; '.repeat(40)}</pre>
-<p><a id="js-link" href="javascript:top.document.body.dataset.hacked='link'">Hostile link</a></p>
+<p><a id="js-link" href="javascript:top.document.body.dataset.hacked='link'">Hostile link</a>
+<a id="to-notes" href="notes.xhtml">notes</a> <a id="to-cyclic" href="cyclic.xhtml">cyclic</a>
+<a id="to-probe" href="../Images/probe.svg">probe</a> <a id="to-nohead" href="nohead.xhtml">nohead</a>
+<a id="to-svgroot" href="svgroot.xhtml">svgroot</a> <a id="to-xslt" href="xslt.xhtml">xslt</a></p>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="30"><a id="svg-link" xlink:href="chapter%202.xhtml"><text x="0" y="20">SVG link</text></a></svg>
 <script>document.body.dataset.hacked = "1"</script>
 <meta http-equiv="refresh" content="1;url=https://example.invalid/"/>
 <iframe src="../Images/probe.svg" width="1" height="1"></iframe>
@@ -183,17 +262,40 @@ function generalEpub() {
 <embed src="../Images/probe.svg" width="1" height="1"/>${paragraphs(1)}`,
       ),
     ],
-    ['OEBPS/Text/notes.xhtml', xhtml('Notes', '<h1>Notes</h1><p>Non-linear item.</p>')],
+    // Not well-formed (<br>): read with the HTML parser.
+    ['OEBPS/Text/notes.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>注記</h1><p>Non-linear item.<br></p></body></html>'],
+    // Stylesheets that import each other: neither can get a URL that contains the URL of the other.
+    ['OEBPS/Styles/cycle-a.css', '@import "cycle-b.css";\nh1 { letter-spacing: 1px; }'],
+    ['OEBPS/Styles/cycle-b.css', '@import "cycle-a.css";'],
+    [
+      'OEBPS/Text/cyclic.xhtml',
+      '<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" href="../Styles/cycle-a.css"/><link rel="stylesheet" href="../Styles/cycle-b.css"/></head><body><h1>Cyclic</h1></body></html>',
+    ],
+    // Spine items where a CSP <meta> would not take effect: no <head>, a root that is not <html>,
+    // and a document replaced by the output of an XSLT stylesheet.
+    ['OEBPS/Text/nohead.xhtml', `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>No head</h1>${hack('nohead')}</body></html>`],
+    ['OEBPS/Text/svgroot.xhtml', `<svg xmlns="http://www.w3.org/2000/svg">${hack('svgroot')}</svg>`],
+    [
+      'OEBPS/Text/xslt.xhtml',
+      `<?xml-stylesheet type="text/xsl" href="data:text/xml;base64,${btoa(xslt)}"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>XSLT</title></head><body><h1>XSLT</h1></body></html>`,
+    ],
     [
       'OEBPS/Text/chapter 2.xhtml',
-      xhtml('Chapter 2', `<h1>Chapter 2</h1>${paragraphs(2)}<h2 id="section-2-1">Section 2.1</h2>${paragraphs(2.1)}`),
+      xhtml('Chapter 2', `<h1>Chapter 2</h1><p><a id="to-missing" href="missing.xhtml">Missing</a> <a id="to-local" href="#section-2-1">Section 2.1</a></p>${paragraphs(2)}<h2 id="section-2-1">Section 2.1</h2>${paragraphs(2.1)}`),
     ],
   ])
 }
 
 mkdirSync('samples', { recursive: true })
-writeFileSync('samples/nepub.epub', nepubEpub('nepub 形式サンプル', [1, 2, 3].map(episode)))
+writeFileSync(
+  'samples/nepub.epub',
+  nepubEpub('nepub 形式サンプル', [
+    { name: '第一章', episodes: [episode(1), episode(2)] },
+    { name: '第二章', episodes: [episode(3)] },
+  ]),
+)
 // Per-episode EPUBs usually share the novel's title (and have no identifier).
-for (const n of [1, 2, 3]) writeFileSync(`samples/episode-${n}.epub`, nepubEpub('連載サンプル', [episode(n)]))
+for (const n of [1, 2, 3]) writeFileSync(`samples/episode-${n}.epub`, nepubEpub('連載サンプル', [{ name: 'default', episodes: [episode(n)] }]))
 writeFileSync('samples/general.epub', generalEpub())
 console.log('Generated samples/*.epub')
