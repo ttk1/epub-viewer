@@ -9,6 +9,10 @@ export interface Metadata {
   title: string
   creator: string
   language: string
+  /** "pre-paginated": a fixed-layout book, where every section is one page of a fixed size (e.g. manga). */
+  layout: 'reflowable' | 'pre-paginated'
+  /** The side that pages progress towards: "rtl" for books opened from the right (vertical text, manga). */
+  direction: 'ltr' | 'rtl'
 }
 
 /** A spine item: one content document, in reading order. */
@@ -19,6 +23,8 @@ export interface Section {
   linear: boolean
   /** Uncompressed size in bytes, used to estimate progress through the whole book. */
   size: number
+  /** Fixed layout: the side of a two-page spread that the page belongs on, if the book says. */
+  spread?: 'left' | 'right' | 'center'
 }
 
 export interface TocItem {
@@ -82,9 +88,11 @@ export async function openBook(source: BookSource): Promise<Book> {
     const item = items.get(el.getAttribute('idref') ?? '')
     // Only (X)HTML: other documents (e.g. SVG) cannot carry the CSP that blocks their scripts.
     if (!item || !HTML_TYPES.includes(item.type)) return []
-    return [{ href: item.href, linear: el.getAttribute('linear') !== 'no', size: zip.size(item.href) }]
+    const spread = el.getAttribute('properties')?.match(/page-spread-(left|right|center)/)?.[1] as Section['spread']
+    return [{ href: item.href, linear: el.getAttribute('linear') !== 'no', size: zip.size(item.href), spread }]
   })
 
+  const metas = all(opf, 'meta')
   const uid = first(opf, 'package')?.getAttribute('unique-identifier')
   const identifiers = all(opf, 'identifier')
   const metadata: Metadata = {
@@ -92,6 +100,10 @@ export async function openBook(source: BookSource): Promise<Book> {
     title: text(first(opf, 'title')),
     creator: text(first(opf, 'creator')),
     language: text(first(opf, 'language')),
+    layout: metas.some((el) => el.getAttribute('property') === 'rendition:layout' && text(el) === 'pre-paginated')
+      ? 'pre-paginated'
+      : 'reflowable',
+    direction: first(opf, 'spine')?.getAttribute('page-progression-direction') === 'rtl' ? 'rtl' : 'ltr',
   }
 
   // EPUB 3 navigation document, falling back to the EPUB 2 NCX.
@@ -103,7 +115,7 @@ export async function openBook(source: BookSource): Promise<Book> {
       ? parseNcx(await readXml(ncx.href), ncx.href)
       : []
 
-  const coverId = all(opf, 'meta').find((el) => el.getAttribute('name') === 'cover')?.getAttribute('content')
+  const coverId = metas.find((el) => el.getAttribute('name') === 'cover')?.getAttribute('content')
   const cover = itemList.find((item) => item.properties.includes('cover-image')) ?? items.get(coverId ?? '')
 
   const types = new Map(itemList.map((item) => [item.href, item.type]))
