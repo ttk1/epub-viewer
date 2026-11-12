@@ -8,7 +8,7 @@ export interface ReaderSettings {
   /** "book" keeps the book's own fonts. */
   font: 'mincho' | 'gothic' | 'book'
   fontSize: number
-  /** Line height as a multiple of the font size. */
+  /** Line height as a multiple of the font size; 0 keeps the book's own. */
   lineHeight: number
   /** Page width in px, 0 = full width. */
   maxWidth: number
@@ -40,7 +40,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   theme: 'system',
   font: 'mincho',
   fontSize: 45, // large enough to read comfortably at a distance
-  lineHeight: 1.6,
+  lineHeight: 0,
   maxWidth: 0,
   writingMode: 'auto',
   spread: 'auto',
@@ -77,7 +77,7 @@ const TOOLBAR = `
         </span>
       </div>
       ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
-      ${choices('lineHeight', '行間', [[1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
+      ${choices('lineHeight', '行間', [[0, '本の指定'], [1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
       ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
       ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       ${choices('spread', '見開き', [['auto', '自動'], ['always', 'する'], ['never', 'しない']])}

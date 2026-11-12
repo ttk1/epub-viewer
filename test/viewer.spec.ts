@@ -272,6 +272,7 @@ test.describe('nepub-style EPUB (vertical)', () => {
 
   test('changes the line height', async ({ page }) => {
     const lineHeight = () => evaluate(page, () => getComputedStyle(document.querySelector('p')!).lineHeight)
+    await expect(page.locator('input[name=lineHeight]:checked')).toHaveValue('0') // the book's own: nepub sets none
     expect(await lineHeight()).toBe('72px') // 45px × 1.6
     const before = await pageCount(page)
     await setting(page, 'lineHeight', '2.2')
@@ -540,6 +541,16 @@ test.describe('general EPUB 2 (horizontal)', () => {
     await expect.poll(() => heading(page)).toBe('Chapter 2')
     await press(page, 'ArrowRight')
     await expect(page.locator('.progress')).toHaveText(/^2 \//)
+  })
+
+  test('a chosen line height overrides the one that the book sets', async ({ page }) => {
+    const lineHeight = () => evaluate(page, () => getComputedStyle(document.querySelector('p')!).lineHeight)
+    await evaluate(page, () => document.head.append(Object.assign(document.createElement('style'), { textContent: 'p { line-height: 3; }' })))
+    expect(await lineHeight()).toBe('135px') // the book's: 45px × 3
+    await setting(page, 'lineHeight', '2.2')
+    expect(await lineHeight()).toBe('99px')
+    await setting(page, 'lineHeight', '0')
+    expect(await lineHeight()).toBe('135px')
   })
 
   test('lays out horizontal text in two columns for a spread', async ({ page }) => {

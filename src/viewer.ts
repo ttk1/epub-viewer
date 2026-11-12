@@ -30,7 +30,7 @@ export interface ViewerOptions {
   fontFamily: string
   /** Base font size in CSS px. Text sized relatively (em, %) by the book scales with it. */
   fontSize: number
-  /** Line height as a multiple of the font size, for text whose line height the book does not set. */
+  /** Line height of the text as a multiple of the font size, overriding the book's. 0 keeps the book's (1.6 where it sets none). */
   lineHeight: number
   /** "auto" follows the book's CSS. */
   writingMode: 'auto' | 'vertical' | 'horizontal'
@@ -111,7 +111,7 @@ const DEFAULTS: ViewerOptions = {
   theme: themes.light,
   fontFamily: '',
   fontSize: 16,
-  lineHeight: 1.6,
+  lineHeight: 0,
   writingMode: 'auto',
   margin: 32,
   maxWidth: 0,
@@ -498,8 +498,11 @@ export class EpubViewer extends EventTarget {
       /* Defaults only; the book's own CSS wins. A line longer than a page would run into the
          next page, so break runs without break opportunities (e.g. "……" × 100) where they
          overflow, and wrap preformatted text. */
-      html { line-height: ${lineHeight}; overflow-wrap: break-word; }
+      html { line-height: 1.6; overflow-wrap: break-word; }
       pre { white-space: pre-wrap; }
+      /* On the blocks of text only: the book's line heights of smaller parts stay (e.g. of upright
+         numbers in a vertical line, which would otherwise push the lines apart). */
+      ${lineHeight ? `html, body, p, div, li, dd, dt, blockquote, td, th { line-height: ${lineHeight} !important; }` : ''}
       html {
         writing-mode: ${this.#writingMode} !important;
         box-sizing: border-box !important;
