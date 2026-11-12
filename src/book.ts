@@ -187,19 +187,17 @@ export class Book {
   async #createUrl(path: string): Promise<string> {
     const type = this.#types.get(path) ?? ''
     let blob = await this.#zip.read(path, type)
-    const rewritten = this.#documents.has(path) || HTML_TYPES.includes(type) || type === 'text/css'
     if (this.#documents.has(path) || HTML_TYPES.includes(type)) {
       // A section is rewritten whatever the manifest calls it elsewhere: a file can be listed
       // twice, as a document and as something else. Shown as it is, its scripts would run.
       blob = await this.#rewriteHtml(await blob.text(), path, HTML_TYPES.includes(type) ? type : HTML_TYPES[0])
     } else if (type === 'text/css') {
       blob = textBlob(await this.#rewriteCss(await blob.text(), path), type)
-    }
-    // A blob: URL has the origin of the page. The reader can open any file of the book as a page
-    // of its own (e.g. "open image in new tab"), where the scripts of an SVG would run with that
-    // origin. So only files that cannot hold scripts get one, and the rest a data: URL, which
-    // has an origin of its own.
-    if (!rewritten && !INERT_TYPES.test(type)) {
+    } else if (!INERT_TYPES.test(type)) {
+      // A blob: URL has the origin of the page. The reader can open any file of the book as a page
+      // of its own (e.g. "open image in new tab"), where the scripts of an SVG would run with that
+      // origin. So only rewritten files and those that cannot hold scripts get one, and the rest
+      // a data: URL, which has an origin of its own.
       const reader = new FileReader()
       reader.readAsDataURL(blob)
       await new Promise((resolve, reject) => Object.assign(reader, { onload: resolve, onerror: reject }))
@@ -221,50 +219,16 @@ export class Book {
       // document would be their content, and nothing of it shown.
       doc = parse(type, source.replace(/<([a-z][\w:.-]*)(\s[^<>]*)?\/>/gi, (tag, name: string, attrs = '') => (VOID_ELEMENTS.test(name) ? tag : `<${name}${attrs}></${name}>`)))
     }
-    // Scripts in the book must never run: the viewer iframe needs "allow-scripts" (see viewer.ts),
-    // so they are blocked here by CSP. Only resources from the archive (blob:/data:) are loaded.
-    const csp = doc.createElementNS(XHTML, 'meta')
-    csp.setAttribute('http-equiv', 'Content-Security-Policy')
-    csp.setAttribute('content', CSP)
-    // The CSP only works inside <head>, and only on what comes after it: XHTML may have no <head>,
-    // or a <script> before it.
-    let head = doc.documentElement.firstElementChild
-    if (!(head instanceof HTMLHeadElement)) {
-      head = doc.createElementNS(XHTML, 'head')
-      doc.documentElement.prepend(head)
-    }
-    // Firefox looks up the host names of the links in a page ahead of time, also in a blob:
-    // document of an https: page (where it would not for the page itself). With names made up for
-    // it, a book could learn who reads it, and when. Once off, the book cannot turn this on again.
-    const noPrefetch = doc.createElementNS(XHTML, 'meta')
-    noPrefetch.setAttribute('http-equiv', 'x-dns-prefetch-control')
-    noPrefetch.setAttribute('content', 'off')
-    head.prepend(csp, noPrefetch)
-    // <?xml-stylesheet?>: an XSLT stylesheet would replace the document with one that has no CSP.
-    for (const node of [...doc.childNodes]) {
-      if (node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) node.remove()
-    }
-    // CSP does not cover <meta http-equiv="refresh">, which could navigate the page anywhere.
-    for (const el of doc.querySelectorAll('meta[http-equiv]')) {
-      if (isRefresh(el)) el.remove()
-    }
+    protect(doc)
+
+    // References to other files of the book are replaced by the URLs of those files.
     // The images in srcset would not be found (they are relative to a blob: URL now), and browsers
     // do not fall back to src then. So only src, which is rewritten below, is kept.
     for (const el of doc.querySelectorAll('[srcset]')) el.removeAttribute('srcset')
-    // A <link> is a stylesheet and nothing else: other kinds have no use in a book, but can name a
-    // server for the browser to connect to ahead of time (rel="preconnect"), which the CSP does
-    // not stop in WebKit. Nor may a stylesheet be one of them as well (rel="stylesheet preconnect").
-    for (const el of doc.querySelectorAll('link')) {
-      const rel = relOf(el).filter((kind) => STYLESHEET_RELS.includes(kind))
-      if (rel.includes('stylesheet')) el.setAttribute('rel', rel.join(' '))
-      else el.remove()
-    }
-    for (const el of doc.querySelectorAll(UNSAFE_ELEMENTS)) el.remove()
-
     const targets = [
       ['[src]', 'src'],
       ['[poster]', 'poster'],
-      ['link[href]', 'href'], // stylesheets only (see above): not rel="next" and the like, which would pull in the whole book
+      ['link[href]', 'href'], // stylesheets only (see protect): not rel="next" and the like, which would pull in the whole book
       ['image', 'href'],
       ['image', 'xlink:href'],
     ]
@@ -286,13 +250,9 @@ export class Book {
     const html = `<!DOCTYPE html>${doc.documentElement.outerHTML}`
     // HTML does not always read back as it was written: text or a comment can come back as an
     // element (e.g. a <meta> that takes the page elsewhere). Nothing is shown of a document in
-    // which something that was removed above is there again.
-    const again = parse(type, html)
-    const unsafe =
-      again.querySelector(UNSAFE_ELEMENTS) ??
-      [...again.querySelectorAll('meta[http-equiv]')].find(isRefresh) ??
-      [...again.querySelectorAll('link')].find((link) => !isStylesheet(link))
-    return textBlob(unsafe ? `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">` : html, type)
+    // which something that protect() removed is there again.
+    const safe = unwanted(parse(type, html)).length === 0
+    return textBlob(safe ? html : `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">`, type)
   }
 
   async #rewriteCss(css: string, path: string): Promise<string> {
@@ -360,11 +320,57 @@ function parseXml(source: string): Document {
 }
 
 /**
- * Elements that are not the same when a document is rewritten (scripts are off) and when it is
- * shown (scripts are "on", only blocked), so that what is inside them escapes the rewriting:
- * <noscript> is text when shown, and a <template> can become a shadow root.
+ * Makes a document of the book safe to show in a frame that has the origin of the host page: its
+ * scripts must never run, it must not take the frame elsewhere, and it must not reach other servers.
  */
-const UNSAFE_ELEMENTS = 'noscript, template'
+function protect(doc: Document): void {
+  const meta = (name: string, content: string) => {
+    const el = doc.createElementNS(XHTML, 'meta')
+    el.setAttribute('http-equiv', name)
+    el.setAttribute('content', content)
+    return el
+  }
+  // The CSP only works inside <head>, and only on what comes after it: XHTML may have no <head>,
+  // or a <script> before it.
+  let head = doc.documentElement.firstElementChild
+  if (!(head instanceof HTMLHeadElement)) {
+    head = doc.createElementNS(XHTML, 'head')
+    doc.documentElement.prepend(head)
+  }
+  head.prepend(
+    // The viewer's frame needs "allow-scripts" (see viewer.ts), so scripts are blocked by CSP.
+    // Only resources from the archive (blob: / data:) are loaded.
+    meta('Content-Security-Policy', CSP),
+    // Firefox looks up the host names of the links in a page ahead of time, also in a blob:
+    // document of an https: page (where it would not for the page itself). With names made up for
+    // it, a book could learn who reads it, and when. Once off, the book cannot turn this on again.
+    meta('x-dns-prefetch-control', 'off'),
+  )
+  // <?xml-stylesheet?>: an XSLT stylesheet would replace the document with one that has no CSP.
+  for (const node of [...doc.childNodes]) {
+    if (node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) node.remove()
+  }
+  // A stylesheet is nothing else as well (rel="stylesheet preconnect"): see unwanted().
+  for (const link of doc.querySelectorAll('link')) {
+    const rel = relOf(link).filter((kind) => STYLESHEET_RELS.includes(kind))
+    if (rel.includes('stylesheet')) link.setAttribute('rel', rel.join(' '))
+  }
+  for (const el of unwanted(doc)) el.remove()
+}
+
+/** The elements that must not be in a document that is shown. */
+const unwanted = (doc: Document): Element[] => [
+  // Not the same when a document is rewritten (scripts are off) and when it is shown (scripts are
+  // "on", only blocked), so that what is inside them escapes the rewriting: <noscript> is text
+  // when shown, and a <template> can become a shadow root.
+  ...doc.querySelectorAll('noscript, template'),
+  // Not covered by the CSP: takes the page anywhere.
+  ...[...doc.querySelectorAll('meta[http-equiv]')].filter(isRefresh),
+  // A <link> is a stylesheet and nothing else: other kinds have no use in a book, but can name a
+  // server for the browser to connect to ahead of time (rel="preconnect"), which the CSP does not
+  // stop in WebKit.
+  ...[...doc.querySelectorAll('link')].filter((link) => !isStylesheet(link)),
+]
 /** The elements that have no end tag in HTML. */
 const VOID_ELEMENTS = /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i
 /** Types of files that cannot hold scripts, whatever is in them: bitmap images, fonts, audio and video. */

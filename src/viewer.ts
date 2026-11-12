@@ -2,7 +2,7 @@ import { resolvePath, type Book } from './book.ts'
 import { fitScale, pageSize, pairPages, twoPages } from './fixed.ts'
 import { Input } from './input.ts'
 import { DEFAULT_OPTIONS, type ViewerOptions } from './options.ts'
-import { firstText, pageOf, paginate, scrolledPage, scrollToPage, type Pagination } from './reflow.ts'
+import { firstText, pageOf, paginate, prepare, scrolledPage, scrollToPage, type Pagination } from './reflow.ts'
 
 /** A position in a book that survives re-layout (font size / window size changes). */
 export interface BookLocation {
@@ -172,7 +172,7 @@ export class EpubViewer extends EventTarget {
   async open(book: Book, target?: BookTarget): Promise<void> {
     // e.g. a book of SVG documents only, which are not shown. The book shown before stays.
     if (!book.sections.length) throw new Error('The book has nothing to show: no XHTML or HTML documents in its spine')
-    const before = { book: this.#book, index: this.#index, shown: this.#shown }
+    const before = { book: this.#book, index: this.#index, shown: this.#shown, pending: this.#pending }
     this.#book = book
     this.#index = -1
     this.#shown = []
@@ -190,7 +190,9 @@ export class EpubViewer extends EventTarget {
       // Nothing of this book has come to the screen (e.g. its first section cannot be read): the
       // page of the book before is still there, and that book goes on. Left as it is, no page
       // could be turned any more.
-      if (this.#book === book && this.#index < 0) [this.#book, this.#index, this.#shown] = [before.book, before.index, before.shown]
+      if (this.#book === book && this.#index < 0) {
+        ;[this.#book, this.#index, this.#shown, this.#pending] = [before.book, before.index, before.shown, before.pending]
+      }
       throw error
     }
   }
@@ -446,22 +448,9 @@ export class EpubViewer extends EventTarget {
       style.textContent = 'html { overflow: hidden !important; touch-action: manipulation !important; }'
     } else {
       this.#style = style
-      this.#bookWritingMode = doc.defaultView!.getComputedStyle(doc.body ?? doc.documentElement).writingMode
+      this.#bookWritingMode = '' // read at the first layout (see #layout)
       doc.addEventListener('scroll', this.#onScroll)
-      // A section that begins with an image, e.g. <p><img/></p>: the margins above it, which are
-      // not dropped at the start of a section, would push an image as high as the page to the
-      // next page, and leave the first one empty.
-      const above: HTMLElement[] = []
-      let first: Element | null = doc.body
-      while (first && !first.matches('img, svg')) {
-        above.push(first as HTMLElement)
-        const content: ChildNode | undefined = [...first.childNodes].find((node) => node.nodeType === Node.ELEMENT_NODE || node.textContent!.trim())
-        first = content?.nodeType === Node.ELEMENT_NODE ? (content as Element) : null
-      }
-      if (first) for (const el of above.slice(1)) el.style.setProperty('margin-block-start', '0', 'important')
-      // An SVG that is told to stretch to its box (the cover page that calibre makes): the box is
-      // fitted to the page here, and does not have the shape of the image.
-      for (const svg of doc.querySelectorAll('svg[preserveAspectRatio="none"]')) svg.removeAttribute('preserveAspectRatio')
+      prepare(doc)
     }
     this.#input.attach(doc)
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index, doc } }))
@@ -503,7 +492,8 @@ export class EpubViewer extends EventTarget {
     const doc = this.#frame.contentDocument
     if (!doc || !this.#style) return
     if (!this.#bookWritingMode) {
-      // Firefox has no computed style for a document in a hidden frame: read now that it is shown, without our rules.
+      // What the book says, without our rules. Firefox has no computed style for a document in a
+      // hidden frame, and gives "": it is read again at the next layout, when the frame is shown.
       this.#style.textContent = ''
       this.#bookWritingMode = doc.defaultView!.getComputedStyle(doc.body ?? doc.documentElement).writingMode
     }

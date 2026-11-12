@@ -23,7 +23,7 @@
 | `src/zip.ts` | 最小 ZIP リーダー（stored / deflate のみ、`DecompressionStream` 使用） |
 | `src/book.ts` | EPUB 解析（`openBook`）。リソースを blob: URL 化し、HTML/CSS の参照を書き換える |
 | `src/options.ts` | `EpubViewer` のオプション、テーマ、フォントの定義 |
-| `src/reflow.ts` | リフロー型（小説など）のページ分割。CSS 段組みの生成、ページ数、ページ先頭の文字探し |
+| `src/reflow.ts` | リフロー型（小説など）のページ分割。CSS 段組みの生成、ページ数、ページ先頭の文字探し、ページにうまく収まらない本の作りへの手当て |
 | `src/fixed.ts` | 固定レイアウト（漫画など）。ページの大きさ、見開きの組み合わせ、拡大率 |
 | `src/input.ts` | ユーザー入力（キー・クリック・ホイール・タッチ）をページ送りに変える |
 | `src/viewer.ts` | `EpubViewer`。フレーム（iframe）の管理、移動、位置、イベント。ページ分割と入力は上の 3 つに任せる |

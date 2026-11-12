@@ -17,6 +17,27 @@ export interface Pagination {
 }
 
 /**
+ * Changes what, in the way that some books are made, would not come out well in pages. Once for a
+ * document, before it is laid out.
+ */
+export function prepare(doc: Document): void {
+  // A section that begins with an image, e.g. <p><img/></p>: the margins above it, which are not
+  // dropped at the start of a section, would push an image as high as the page to the next page,
+  // and leave the first one empty.
+  const above: HTMLElement[] = []
+  let first: Element | null = doc.body
+  while (first && !first.matches('img, svg')) {
+    above.push(first as HTMLElement)
+    const content: ChildNode | undefined = [...first.childNodes].find((node) => node.nodeType === Node.ELEMENT_NODE || node.textContent!.trim())
+    first = content?.nodeType === Node.ELEMENT_NODE ? (content as Element) : null
+  }
+  if (first) for (const el of above.slice(1)) el.style.setProperty('margin-block-start', '0', 'important')
+  // An SVG that is told to stretch to its box (the cover page that calibre makes): the box is
+  // fitted to the page here, and does not have the shape of the image.
+  for (const svg of doc.querySelectorAll('svg[preserveAspectRatio="none"]')) svg.removeAttribute('preserveAspectRatio')
+}
+
+/**
  * Lays out `doc` in pages of `width` × `height`, by the rules written into `style` (a style
  * element in `doc`). `bookWritingMode` is the writing mode that the book itself declares.
  */
