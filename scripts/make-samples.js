@@ -169,7 +169,7 @@ const episode = (n) => ({
 // ---- fixed layout (manga) ----
 
 /** Pages of 600 × 900, each a single image, read from right to left. The book says which side each page is on. */
-function fixedEpub(title, sides) {
+function fixedEpub(title, sides, svg = false) {
   const pages = sides.map((side, i) => ({ id: `p${i + 1}`, side, image: png(600, 900, [(40 * i) % 256, 120, 255 - ((40 * i) % 256)]) }))
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" xml:lang="ja" unique-identifier="id">
@@ -194,7 +194,12 @@ ${pages.map((p) => `    <itemref idref="${p.id}"${p.side ? ` properties="${p.sid
   const page = (p, n) => `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page ${n}</title>
 <meta name="viewport" content="width=600, height=900"/>
 <style>body { margin: 0; } img { display: block; width: 600px; height: 900px; }</style></head>
-<body><img src="${p.id}.png" alt="${n} ページ"/></body></html>`
+<body>${
+    // The two usual ways to make a page of an image.
+    svg
+      ? `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 600 900" width="600" height="900"><image width="600" height="900" xlink:href="${p.id}.png"/></svg>`
+      : `<img src="${p.id}.png" alt="${n} ページ"/>`
+  }</body></html>`
   return createZip([
     ['mimetype', 'application/epub+zip', true],
     ['META-INF/container.xml', container('content.opf')],
@@ -250,6 +255,7 @@ function generalEpub() {
     <item id="noscript" href="Text/noscript.html" media-type="text/html"/>
     <item id="shadow" href="Text/shadow.html" media-type="text/html"/>
     <item id="links" href="Text/links.xhtml" media-type="application/xhtml+xml"/>
+    <item id="charset" href="Text/charset.html" media-type="text/html"/>
     <item id="nohead" href="Text/nohead.xhtml" media-type="application/xhtml+xml"/>
     <item id="svgroot" href="Text/svgroot.xhtml" media-type="application/xhtml+xml"/>
     <item id="xslt" href="Text/xslt.xhtml" media-type="application/xhtml+xml"/>
@@ -259,6 +265,7 @@ function generalEpub() {
     <itemref idref="notes" linear="no"/>
     <itemref idref="cyclic" linear="no"/>
     <itemref idref="probe" linear="no"/>
+    <itemref idref="charset" linear="no"/>
     <itemref idref="dup" linear="no"/>
     <itemref idref="noscript" linear="no"/>
     <itemref idref="shadow" linear="no"/>
@@ -303,6 +310,7 @@ function generalEpub() {
 <a id="to-notes" href="notes.xhtml">notes</a> <a id="to-cyclic" href="cyclic.xhtml">cyclic</a>
 <a id="to-dup" href="dup.xhtml">dup</a> <a id="to-noscript" href="noscript.html">noscript</a>
 <a id="to-shadow" href="shadow.html">shadow</a> <a id="to-links" href="links.xhtml">links</a>
+<a id="to-charset" href="charset.html">charset</a>
 <a id="to-probe" href="../Images/probe.svg">probe</a> <a id="to-nohead" href="nohead.xhtml">nohead</a>
 <a id="to-svgroot" href="svgroot.xhtml">svgroot</a> <a id="to-xslt" href="xslt.xhtml">xslt</a></p>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="30"><a id="svg-link" xlink:href="chapter%202.xhtml"><text x="0" y="20">SVG link</text></a></svg>
@@ -339,6 +347,12 @@ function generalEpub() {
     [
       'OEBPS/Text/links.xhtml',
       xhtml('Links', '<h1>Links</h1><svg xmlns="http://www.w3.org/2000/svg" width="300" height="40"><a id="animated-link"><set attributeName="href" to="about:blank"/><text x="0" y="30" font-size="30">Leave</text></a></svg>'),
+    ],
+    // Declares an encoding in which the escape sequences (ESC $ B ... ESC ( B) make everything
+    // between them, where the CSP <meta> is put, part of the attribute of <html>.
+    [
+      'OEBPS/Text/charset.html',
+      `<html x="\x1b$B"><head><meta charset="iso-2022-jp"><title>\x1b(B"</title></head><body><h1>Charset</h1>${hack('charset')}</body></html>`,
     ],
     // Spine items where a CSP <meta> would not take effect: no <head>, a root that is not <html>,
     // and a document replaced by the output of an XSLT stylesheet.
@@ -377,7 +391,7 @@ writeFileSync(
     'page-spread-right',
     'page-spread-left',
     'page-spread-right',
-  ]),
+  ], true),
 )
 // The same without sides, as many books are made.
 writeFileSync('samples/fixed-plain.epub', fixedEpub('固定レイアウトサンプル', Array(25).fill('')))

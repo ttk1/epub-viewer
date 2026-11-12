@@ -93,6 +93,17 @@ test('a book opened while another is still loading is shown at the place asked f
   expect(location).toEqual({ index: 2, progress: 0, book: true })
 })
 
+test('a move asked for while the book is still opening is not replaced by the start of the book', async ({ page }) => {
+  await page.goto('/app/')
+  const location = await withViewer(page, async (viewer, { openBook }) => {
+    const book = await openBook('/samples/nepub.epub')
+    await Promise.all([viewer.open(book), viewer.goTo({ index: 2, progress: 0 })])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    return viewer.location
+  })
+  expect(location).toEqual({ index: 2, progress: 0 })
+})
+
 test('of two navigations, the one asked for last wins, whichever is ready first', async ({ page }) => {
   await page.goto('/app/')
   const index = await withViewer(page, async (viewer, { openBook }) => {

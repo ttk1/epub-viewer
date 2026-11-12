@@ -26,7 +26,7 @@ test.describe('fixed-layout EPUB (manga, right to left)', () => {
     expect(cover.box.width / cover.box.height).toBeCloseTo(600 / 900, 2) // in the proportions of the page
     expect(cover.box.left + cover.box.width / 2).toBeCloseTo(viewer.x + viewer.width / 2, 0) // centered
     // The page itself is laid out at its own size, whatever the scale.
-    expect(await evaluate(page, () => [innerWidth, innerHeight, document.querySelector('img')!.width])).toEqual([600, 900, 600])
+    expect(await evaluate(page, () => [innerWidth, innerHeight, document.querySelector('svg image')!.getBoundingClientRect().width])).toEqual([600, 900, 600])
 
     await press(page, 'ArrowLeft') // left = next, for a book read from right to left
     await expect(page.locator('.progress')).toHaveText('2 / 6（50%）')
