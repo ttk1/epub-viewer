@@ -56,6 +56,28 @@ test.describe('general EPUB 2 (horizontal)', () => {
     })
   }
 
+  test('does not run scripts in a file that the manifest lists twice, as different kinds', async ({ page }) => {
+    await content(page).locator('#to-dup').click()
+    await expect.poll(() => heading(page)).toBe('Dup')
+    await page.waitForTimeout(500)
+    expect(await page.evaluate(() => document.body.dataset.hacked)).toBeUndefined()
+  })
+
+  // Each of these would take the frame to another page (here: an empty one) by itself.
+  for (const [target, title, act] of [
+    ['noscript', 'Noscript', undefined],
+    ['shadow', 'Shadow', '#host'],
+    ['links', 'Links', '#animated-link'],
+  ] as const) {
+    test(`does not let the book leave the frame (${target})`, async ({ page }) => {
+      await content(page).locator(`#to-${target}`).click()
+      await expect.poll(() => heading(page)).toBe(title)
+      if (act) await content(page).locator(act).click()
+      await page.waitForTimeout(1000)
+      expect(await heading(page)).toBe(title)
+    })
+  }
+
   test('reads XHTML that is not well-formed', async ({ page }) => {
     await content(page).locator('#to-notes').click()
     await expect.poll(() => heading(page)).toBe('注記')

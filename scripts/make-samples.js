@@ -170,7 +170,7 @@ const episode = (n) => ({
 
 /** Pages of 600 × 900, each a single image, read from right to left. The book says which side each page is on. */
 function fixedEpub(title, sides) {
-  const pages = sides.map((side, i) => ({ id: `p${i + 1}`, side, image: png(600, 900, [40 * i, 120, 255 - 40 * i]) }))
+  const pages = sides.map((side, i) => ({ id: `p${i + 1}`, side, image: png(600, 900, [(40 * i) % 256, 120, 255 - ((40 * i) % 256)]) }))
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" xml:lang="ja" unique-identifier="id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -245,6 +245,11 @@ function generalEpub() {
     <item id="cycle-a" href="Styles/cycle-a.css" media-type="text/css"/>
     <item id="cycle-b" href="Styles/cycle-b.css" media-type="text/css"/>
     <item id="cyclic" href="Text/cyclic.xhtml" media-type="application/xhtml+xml"/>
+    <item id="dup" href="Text/dup.xhtml" media-type="application/xhtml+xml"/>
+    <item id="dup-again" href="Text/dup.xhtml" media-type="image/svg+xml"/>
+    <item id="noscript" href="Text/noscript.html" media-type="text/html"/>
+    <item id="shadow" href="Text/shadow.html" media-type="text/html"/>
+    <item id="links" href="Text/links.xhtml" media-type="application/xhtml+xml"/>
     <item id="nohead" href="Text/nohead.xhtml" media-type="application/xhtml+xml"/>
     <item id="svgroot" href="Text/svgroot.xhtml" media-type="application/xhtml+xml"/>
     <item id="xslt" href="Text/xslt.xhtml" media-type="application/xhtml+xml"/>
@@ -254,6 +259,10 @@ function generalEpub() {
     <itemref idref="notes" linear="no"/>
     <itemref idref="cyclic" linear="no"/>
     <itemref idref="probe" linear="no"/>
+    <itemref idref="dup" linear="no"/>
+    <itemref idref="noscript" linear="no"/>
+    <itemref idref="shadow" linear="no"/>
+    <itemref idref="links" linear="no"/>
     <itemref idref="nohead" linear="no"/>
     <itemref idref="svgroot" linear="no"/>
     <itemref idref="xslt" linear="no"/>
@@ -292,6 +301,8 @@ function generalEpub() {
 <pre id="long-pre">${'const longLine = 1; '.repeat(40)}</pre>
 <p><a id="js-link" href="javascript:top.document.body.dataset.hacked='link'">Hostile link</a>
 <a id="to-notes" href="notes.xhtml">notes</a> <a id="to-cyclic" href="cyclic.xhtml">cyclic</a>
+<a id="to-dup" href="dup.xhtml">dup</a> <a id="to-noscript" href="noscript.html">noscript</a>
+<a id="to-shadow" href="shadow.html">shadow</a> <a id="to-links" href="links.xhtml">links</a>
 <a id="to-probe" href="../Images/probe.svg">probe</a> <a id="to-nohead" href="nohead.xhtml">nohead</a>
 <a id="to-svgroot" href="svgroot.xhtml">svgroot</a> <a id="to-xslt" href="xslt.xhtml">xslt</a></p>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="30"><a id="svg-link" xlink:href="chapter%202.xhtml"><text x="0" y="20">SVG link</text></a></svg>
@@ -310,6 +321,24 @@ function generalEpub() {
     [
       'OEBPS/Text/cyclic.xhtml',
       '<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" href="../Styles/cycle-a.css"/><link rel="stylesheet" href="../Styles/cycle-b.css"/></head><body><h1>Cyclic</h1></body></html>',
+    ],
+    // Listed twice in the manifest, the second time as something that is not rewritten.
+    ['OEBPS/Text/dup.xhtml', `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Dup</title></head><body><h1>Dup</h1>${hack('dup')}</body></html>`],
+    // Ways of leaving the book that are not there when the document is rewritten (scripts are off
+    // then), but are when it is shown (scripts are "on", only blocked): a comment that ends inside
+    // <noscript>, and a link inside a declarative shadow root.
+    [
+      'OEBPS/Text/noscript.html',
+      '<html><head><title>Noscript</title></head><body><h1>Noscript</h1><noscript><!--</noscript><meta http-equiv="refresh" content="0;url=about:blank">--></noscript></body></html>',
+    ],
+    [
+      'OEBPS/Text/shadow.html',
+      '<html><head><title>Shadow</title></head><body><h1>Shadow</h1><div id="host">Host<template shadowrootmode="open"><a href="about:blank" style="display:block;height:100px">Leave</a></template></div></body></html>',
+    ],
+    // A link whose target is only given by an animation.
+    [
+      'OEBPS/Text/links.xhtml',
+      xhtml('Links', '<h1>Links</h1><svg xmlns="http://www.w3.org/2000/svg" width="300" height="40"><a id="animated-link"><set attributeName="href" to="about:blank"/><text x="0" y="30" font-size="30">Leave</text></a></svg>'),
     ],
     // Spine items where a CSP <meta> would not take effect: no <head>, a root that is not <html>,
     // and a document replaced by the output of an XSLT stylesheet.
@@ -351,5 +380,5 @@ writeFileSync(
   ]),
 )
 // The same without sides, as many books are made.
-writeFileSync('samples/fixed-plain.epub', fixedEpub('固定レイアウトサンプル', Array(5).fill('')))
+writeFileSync('samples/fixed-plain.epub', fixedEpub('固定レイアウトサンプル', Array(25).fill('')))
 console.log('Generated samples/*.epub')

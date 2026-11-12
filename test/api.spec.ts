@@ -1,5 +1,5 @@
 // The API as an embedding app uses it: a viewer or a reader made by the test itself.
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { content, evaluate, heading, click } from './helpers.ts'
 
 test('a click on the middle of the page is reported as a tap, one on the side turns the page', async ({ page }) => {
@@ -49,6 +49,15 @@ test('goTo({ fraction }) moves to a position in the whole book, as reported by r
     }
     await viewer.open(await openBook('/samples/fixed.epub'))
     const pages = { start: await at(0), middle: await at(0.5), end: await at(1) }
+    // The same for pages, also where the fraction is not an exact number (7 / 25).
+    viewer.setOptions({ spread: 'never' })
+    await viewer.open(await openBook('/samples/fixed-plain.epub'))
+    for (let i = 0; i < 25; i++) {
+      await viewer.goTo({ index: i, progress: 0 })
+      const reported = { ...detail }
+      const found = await at(reported.fraction)
+      if (found.index !== reported.index) mismatches.push([reported, found])
+    }
     return { text, pages, mismatches }
   })
   expect(results.text.start).toMatchObject({ index: 0, page: 0 })
@@ -62,6 +71,90 @@ test('goTo({ fraction }) moves to a position in the whole book, as reported by r
   // The spread of pages 2 and 3, of 6. Each page of a fixed-layout book is a section of one page.
   expect(results.pages.middle).toMatchObject({ index: 1, indices: [1, 2], page: 0, pages: 1, fraction: 0.5 })
   expect(results.pages.end).toMatchObject({ index: 5, fraction: 1 })
+})
+
+/** Runs `use` in the page with a viewer of its own over the (empty) app, and the library. */
+const withViewer = <T>(page: Page, use: (viewer: any, lib: any, container: HTMLElement) => Promise<T>) =>
+  page.evaluate(async (use) => {
+    const lib = await import('/dist/src/index.js' as string)
+    const container = document.createElement('div')
+    container.style.cssText = 'position: fixed; inset: 0'
+    document.body.append(container)
+    return new Function(`return (${use})`)()(new lib.EpubViewer(container, { fontSize: 40 }), lib, container)
+  }, use.toString())
+
+test('a book opened while another is still loading is shown at the place asked for', async ({ page }) => {
+  await page.goto('/app/')
+  const location = await withViewer(page, async (viewer, { openBook }) => {
+    const [first, second] = await Promise.all([openBook('/samples/general.epub'), openBook('/samples/nepub.epub')])
+    await Promise.all([viewer.open(first), viewer.open(second, { index: 2, progress: 0 })])
+    return { ...viewer.location, book: viewer.book === second }
+  })
+  expect(location).toEqual({ index: 2, progress: 0, book: true })
+})
+
+test('of two navigations, the one asked for last wins, whichever is ready first', async ({ page }) => {
+  await page.goto('/app/')
+  const index = await withViewer(page, async (viewer, { openBook }) => {
+    const book = await openBook('/samples/nepub.epub')
+    await viewer.open(book)
+    // The files of the first section asked for take longer to get ready.
+    const getUrl = book.getUrl.bind(book)
+    book.getUrl = async (path: string) => {
+      if (path === book.sections[1].href) await new Promise((resolve) => setTimeout(resolve, 300))
+      return getUrl(path)
+    }
+    await Promise.all([viewer.goTo({ index: 1, progress: 0 }), viewer.goTo({ index: 2, progress: 0 })])
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    return viewer.location.index
+  })
+  expect(index).toBe(2)
+})
+
+test('a change of options or of size while a fixed-layout page is loading does not cancel the page turn', async ({ page }) => {
+  await page.goto('/app/')
+  const index = await withViewer(page, async (viewer, { openBook, themes }) => {
+    await viewer.open(await openBook('/samples/fixed.epub'))
+    const turned = viewer.next()
+    viewer.setOptions({ theme: themes.dark })
+    await turned
+    return viewer.location.index
+  })
+  expect(index).toBe(1)
+})
+
+test('keeps the position while the container is hidden', async ({ page }) => {
+  await page.goto('/app/')
+  const pages = await withViewer(page, async (viewer, { openBook }, container) => {
+    await viewer.open(await openBook('/samples/nepub.epub'))
+    const seen: number[] = []
+    viewer.addEventListener('relocate', (e: CustomEvent) => seen.push(e.detail.page))
+    for (let i = 0; i < 3; i++) await viewer.next()
+    const frames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    container.style.display = 'none' // e.g. a tab of the app that is not shown
+    await frames()
+    container.style.display = ''
+    await frames()
+    return seen
+  })
+  expect(pages.every((page) => page > 0)).toBe(true) // never back at the first page
+  expect(pages[pages.length - 1]).toBe(3)
+})
+
+test('shows nothing of a page that the frame has gone to by itself, and reports it', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await withViewer(page, async (viewer, { openBook }, container) => {
+    await viewer.open(await openBook('/samples/general.epub'))
+    const errors: string[] = []
+    viewer.addEventListener('error', (e: CustomEvent) => errors.push(String(e.detail.error)))
+    // What a book could do in a way that is not known yet.
+    const frame = container.querySelector('iframe')!
+    frame.contentWindow!.location.href = '/app/style.css'
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    return { errors, url: container.querySelector('iframe')!.contentDocument?.URL }
+  })
+  expect(result.errors).toHaveLength(1)
+  expect(result.url).toBe('about:blank')
 })
 
 test('with click: false, clicks do not turn pages but links still work', async ({ page }) => {
@@ -139,6 +232,38 @@ test('EpubReader keeps settings and positions in the storage that it is given', 
   expect(result.written).toEqual(['site:position:book-1', 'site:settings'])
   expect(JSON.parse(result.settings!)).toEqual({ theme: 'sepia', fontSize: 30 })
   expect(result.local).toBe(0) // nothing goes to localStorage then
+})
+
+test('EpubReader works with saved things that are not what it would have written', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const root = document.createElement('div')
+    root.style.height = '100vh'
+    document.body.replaceChildren(root)
+    // A theme that this version does not know, and a position that is not one.
+    const saved: Record<string, string> = { 'x:settings': '{"theme":"neon","fontSize":30}', 'x:position:book': '5' }
+    const storage = { getItem: (key: string) => saved[key] ?? null, setItem: () => {} }
+    const reader = new EpubReader(root, { storage, storageKey: 'x' })
+    await reader.open('/samples/nepub.epub', { key: 'book' })
+    return { location: reader.viewer.location, fontSize: reader.settings.fontSize, background: getComputedStyle(root).backgroundColor }
+  })
+  expect(result.location).toEqual({ index: 0, progress: 0 })
+  expect(result.fontSize).toBe(30) // what can be used is used
+  expect(result.background).toBe('rgb(255, 255, 255)') // the light theme
+})
+
+test('controls that the app adds to the toolbar keep the focus that they are given', async ({ page }) => {
+  await page.goto('/app/?url=/samples/nepub.epub')
+  await expect(page.locator('.progress')).toHaveText(/^1 \//)
+  await page.evaluate(() => {
+    document.querySelector('.toolbar')!.append(Object.assign(document.createElement('input'), { type: 'search', placeholder: '検索' }))
+  })
+  await page.locator('.toolbar input[type=search]').click()
+  await page.keyboard.type('abc ')
+  await expect(page.locator('.toolbar input[type=search]')).toBeFocused()
+  await expect(page.locator('.toolbar input[type=search]')).toHaveValue('abc ') // the keys go to the field, not to page turns
+  await expect(page.locator('.progress')).toHaveText(/^1 \//)
 })
 
 test('EpubReader shows the book opened last, even when an earlier one takes longer to load', async ({ page }) => {
