@@ -168,6 +168,52 @@ test('shows nothing of a page that the frame has gone to by itself, and reports 
   expect(result.url).toBe('about:blank')
 })
 
+test('after the frame has gone away by itself, the position is kept and the section can be shown again', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await withViewer(page, async (viewer, { openBook }, container) => {
+    await viewer.open(await openBook('/samples/general.epub'))
+    await viewer.next()
+    await viewer.next()
+    const before = viewer.location
+    container.querySelector('iframe')!.contentWindow!.location.href = '/app/style.css'
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    viewer.setOptions({ fontSize: 30 }) // a re-layout of the empty page must not be taken for the first page
+    const kept = JSON.stringify(viewer.location) === JSON.stringify(before)
+    await viewer.goTo(before)
+    return { kept, heading: container.querySelector('iframe')!.contentDocument!.querySelector('h1')?.textContent, page: viewer.location.progress > 0 }
+  })
+  expect(result).toEqual({ kept: true, heading: 'Chapter 1', page: true })
+})
+
+test('a viewer destroyed while a page is loading does not leave the caller waiting', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await withViewer(page, async (viewer, { openBook }) => {
+    const book = await openBook('/samples/nepub.epub')
+    const opened = viewer.open(book)
+    await book.getUrl(book.sections[0].href)
+    await new Promise((resolve) => setTimeout(resolve, 0)) // the frame has begun to load
+    viewer.destroy()
+    return Promise.race([opened.then(() => 'settled'), new Promise((resolve) => setTimeout(() => resolve('still waiting'), 2000))])
+  })
+  expect(result).toBe('settled')
+})
+
+test('a position that is not a number is taken as the start of the section', async ({ page }) => {
+  await page.goto('/app/')
+  const locations = await withViewer(page, async (viewer, { openBook }) => {
+    await viewer.open(await openBook('/samples/nepub.epub'))
+    const seen = []
+    for (const target of [{ index: 0, progress: NaN }, { fraction: NaN }, { index: 0, progress: 'half' }]) {
+      await viewer.goTo({ index: 0, progress: 0.5 })
+      await viewer.goTo(target)
+      seen.push(viewer.location.progress)
+    }
+    await viewer.next() // and page turns go on from there, not to the next section
+    return [...seen, viewer.location.index, viewer.location.progress > 0]
+  })
+  expect(locations).toEqual([0, 0, 0, 0, true])
+})
+
 test('with click: false, clicks do not turn pages but links still work', async ({ page }) => {
   await page.goto('/app/')
   // A viewer of its own, over the (empty) app.
@@ -262,6 +308,19 @@ test('EpubReader works with saved things that are not what it would have written
   expect(result.location).toEqual({ index: 0, progress: 0 })
   expect(result.fontSize).toBe(30) // what can be used is used
   expect(result.background).toBe('rgb(255, 255, 255)') // the light theme
+})
+
+test('EpubReader does not take a saved theme name for a theme because objects have something by that name', async ({ page }) => {
+  await page.goto('/app/')
+  const background = await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const root = document.createElement('div')
+    root.style.height = '100vh'
+    document.body.replaceChildren(root)
+    new EpubReader(root, { storage: { getItem: () => '{"theme":"constructor"}', setItem: () => {} } })
+    return getComputedStyle(root).backgroundColor
+  })
+  expect(background).toBe('rgb(255, 255, 255)') // the light theme
 })
 
 test('controls that the app adds to the toolbar keep the focus that they are given', async ({ page }) => {

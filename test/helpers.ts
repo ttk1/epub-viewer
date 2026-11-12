@@ -1,6 +1,7 @@
 // Helpers shared by the tests: getting at the page of the book, and operating the reader as a user would.
 import { type Page } from '@playwright/test'
 import { inflateSync } from 'node:zlib'
+import { createZip } from '../scripts/zip.js'
 
 /** The iframe that shows the current section. */
 export const content = (page: Page) => page.frame({ url: /^blob:/ })!
@@ -59,4 +60,19 @@ export async function setting(page: Page, name: string, value: string): Promise<
 export async function chooseChapter(page: Page, label: string): Promise<void> {
   await page.locator('.toc summary').click()
   await page.locator('.toc-list').getByRole('button', { name: label, exact: true }).click()
+}
+
+const CONTAINER = `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`
+/** An XHTML document of a book made by makeBook(). */
+export const xhtml = (body: string, head = '') =>
+  `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page</title>${head}</head><body>${body}</body></html>`
+/**
+ * The bytes of a small EPUB made for one test, where the samples do not have what it needs (e.g.
+ * the address of a server that only the test knows). `manifest` and `spine` are the <item> and
+ * <itemref> elements, `direction` the side that the book says its pages go to; give the bytes to
+ * openBook() as `new Uint8Array(bytes)`.
+ */
+export function makeBook(files: [name: string, content: string][], manifest: string, spine: string, direction = 'ltr'): number[] {
+  const opf = `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Test</dc:title><dc:identifier id="id">test</dc:identifier></metadata><manifest>${manifest}</manifest><spine page-progression-direction="${direction}">${spine}</spine></package>`
+  return [...createZip([['mimetype', 'application/epub+zip', true], ['META-INF/container.xml', CONTAINER], ['content.opf', opf], ...files])]
 }
