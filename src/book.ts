@@ -110,11 +110,9 @@ export async function openBook(source: BookSource): Promise<Book> {
   // EPUB 3 navigation document, falling back to the EPUB 2 NCX.
   const nav = itemList.find((item) => item.properties.includes('nav'))
   const ncx = items.get(first(opf, 'spine')?.getAttribute('toc') ?? '')
-  const toc = nav
-    ? parseNav(await readXml(nav.href), nav.href)
-    : ncx
-      ? parseNcx(await readXml(ncx.href), ncx.href)
-      : []
+  const readToc = async () => (nav ? parseNav(await readXml(nav.href), nav.href) : ncx ? parseNcx(await readXml(ncx.href), ncx.href) : [])
+  // A book whose table of contents cannot be read (e.g. its file is missing) can still be read.
+  const toc = await readToc().catch(() => [])
 
   const coverId = metas.find((el) => el.getAttribute('name') === 'cover')?.getAttribute('content')
   const cover = itemList.find((item) => item.properties.includes('cover-image')) ?? items.get(coverId ?? '')
@@ -237,6 +235,9 @@ export class Book {
     // The images in srcset would not be found (they are relative to a blob: URL now), and browsers
     // do not fall back to src then. So only src, which is rewritten below, is kept.
     for (const el of doc.querySelectorAll('[srcset]')) el.removeAttribute('srcset')
+    // A <link> other than a stylesheet has no use in a book, but can name a server for the browser
+    // to connect to ahead of time (rel="preconnect"), which the CSP does not stop in WebKit.
+    for (const el of doc.querySelectorAll('link:not([rel~="stylesheet" i])')) el.remove()
     for (const el of doc.querySelectorAll(UNSAFE_ELEMENTS)) el.remove()
 
     const targets = [
@@ -331,7 +332,7 @@ function parseXml(source: string): Document {
  */
 const UNSAFE_ELEMENTS = 'noscript, template'
 /** Types of files that cannot hold scripts, whatever is in them: bitmap images, fonts, audio and video. */
-const INERT_TYPES = /^(image\/(png|jpeg|gif|webp|avif|bmp)|font\/|application\/(font-|x-font-|vnd\.ms-opentype)|audio\/|video\/)/
+const INERT_TYPES = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|font\/|application\/(font-|x-font-|vnd\.ms-opentype)|audio\/|video\/)/
 const isRefresh = (meta: Element) => meta.getAttribute('http-equiv')!.trim().toLowerCase() === 'refresh'
 
 /**

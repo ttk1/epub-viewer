@@ -30,6 +30,12 @@ const SWIPE_DISTANCE = 40
 /** A swipe travels at least this many times further sideways than vertically; steeper touches are scrolling. */
 const SWIPE_SLOPE = 1.5
 
+/**
+ * Anything that the browser would follow as a link: <a> and <area> even without an href (an
+ * animation can give one to an SVG <a>), and other elements with an href (in any namespace).
+ */
+const LINKS = 'a, area, [*|href]'
+
 type Listen = 'addEventListener' | 'removeEventListener'
 
 export class Input {
@@ -64,6 +70,7 @@ export class Input {
     // On the root element, not the document: Safari on iOS only turns a tap into a click when an
     // element, rather than the document, listens for clicks.
     doc.documentElement.addEventListener('click', this.#onClick)
+    doc.documentElement.addEventListener('auxclick', this.#onAuxClick)
     this.#listenGestures(doc, 'addEventListener')
     doc.addEventListener('pointerdown', this.#onPointerDown)
   }
@@ -142,10 +149,8 @@ export class Input {
     // The page of the book before this one, still on the screen while the first page loads.
     if (!this.#host.shown()) return e.preventDefault()
     const doc = (e.target as Element).ownerDocument
-    // Anything that the browser would follow as a link: <a> and <area> even without an href (an
-    // animation can give one to an SVG <a>), and other elements with an href (in any namespace).
     // The default is always prevented: the frame must not go anywhere by itself.
-    const link = (e.target as Element).closest?.('a, area, [*|href]')
+    const link = (e.target as Element).closest?.(LINKS)
     if (link) e.preventDefault()
     // Only <a> and <area> are links to follow. Other elements have an href for what they show
     // (<image> and <use> in SVG: a page is often one <image>), and are clicked like the rest of the page.
@@ -156,6 +161,14 @@ export class Input {
     const frame = doc.defaultView!.frameElement!
     const rect = frame.getBoundingClientRect()
     this.#clickAt(rect.left + (e.clientX * rect.width) / frame.clientWidth)
+  }
+
+  /**
+   * Clicks with the other mouse buttons: the middle one would open a link in a new tab, without
+   * the viewer (and the app, by the link event) having a say in it.
+   */
+  #onAuxClick = (e: MouseEvent): void => {
+    if ((e.target as Element).closest?.(LINKS)) e.preventDefault()
   }
 
   /** Clicks on the empty room around the page(s) count as clicks on the edge of the page next to them. */
