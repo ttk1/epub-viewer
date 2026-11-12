@@ -235,14 +235,33 @@ export class EpubViewer extends EventTarget {
     if (this.#index < 0) await this.goTo(start)
   }
 
-  async goTo(target: Location | string): Promise<void> {
-    if (typeof target !== 'string') {
+  /**
+   * Moves to a Location, to a TocItem href, or to a position in the whole book: `fraction` is the
+   * one of the relocate event (0 to 1), so that a slider can show the one and set the other.
+   */
+  async goTo(target: Location | string | { fraction: number }): Promise<void> {
+    if (typeof target === 'string') {
+      const [path, fragment] = target.split('#')
+      const index = this.#book?.sections.findIndex((s) => s.href === path) ?? -1
+      if (index >= 0) await this.#display(index, { fragment })
+    } else if ('fraction' in target) {
+      await this.#seek(target.fraction)
+    } else {
       const index = target.index < 0 ? (this.#book?.sections.length ?? 0) + target.index : target.index
-      return this.#display(index, { progress: target.progress })
+      await this.#display(index, { progress: target.progress })
     }
-    const [path, fragment] = target.split('#')
-    const index = this.#book?.sections.findIndex((s) => s.href === path) ?? -1
-    if (index >= 0) await this.#display(index, { fragment })
+  }
+
+  /** Shows the page that `fraction` of the whole book falls on: the reverse of the fraction of the relocate event. */
+  async #seek(fraction: number): Promise<void> {
+    const sizes = (this.#book?.sections ?? []).map((section) => section.size)
+    const part = Math.min(Math.max(fraction, 0), 1)
+    if (this.#fixed) return this.#display(Math.max(0, Math.ceil(part * sizes.length) - 1), {})
+    // The section that this much of the book (in bytes) ends in, and how far into it.
+    let rest = part * sizes.reduce((a, b) => a + b, 0)
+    let index = 0
+    while (index < sizes.length - 1 && rest > sizes[index]) rest -= sizes[index++]
+    await this.#display(index, { reach: sizes[index] ? rest / sizes[index] : 0 })
   }
 
   next(): Promise<void> {
@@ -418,7 +437,11 @@ export class EpubViewer extends EventTarget {
     return (this.#fixed && this.#spreads().find((spread) => spread.includes(index))) || [index]
   }
 
-  async #display(index: number, { progress = 0, fragment }: { progress?: number; fragment?: string }): Promise<void> {
+  /**
+   * Shows a section. The page of it: the one with the element `fragment`, or the one that `reach`
+   * (0 to 1) of the section falls on, or the one that starts at `progress` (0 to 1).
+   */
+  async #display(index: number, { progress = 0, reach, fragment }: { progress?: number; reach?: number; fragment?: string }): Promise<void> {
     const book = this.#book
     const section = book?.sections[index]
     if (!section) return
@@ -447,7 +470,9 @@ export class EpubViewer extends EventTarget {
       }
       this.#layout()
       const target = fragment && this.#iframe.contentDocument!.getElementById(fragment)
-      this.#showPage(target ? this.#pageOf(target) : Math.round(progress * this.#pages))
+      // A page ends at (page + 1) / pages of the section; the small amount is for rounding errors.
+      const page = reach === undefined ? Math.round(progress * this.#pages) : Math.ceil(reach * this.#pages - 1e-6) - 1
+      this.#showPage(target ? this.#pageOf(target) : page)
       // What the next page turn leads to is made ready ahead of time (its files are unpacked).
       const next = this.#neighbor(1)
       for (const i of next === undefined ? [] : this.#shownWith(next)) book!.getUrl(book!.sections[i].href).catch(() => {})
