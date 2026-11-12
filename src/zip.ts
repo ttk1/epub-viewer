@@ -66,8 +66,21 @@ export class ZipReader {
     const data = this.#blob.slice(start, start + entry.compressedSize, type)
     if (entry.method === 0) return data
     if (entry.method === 8) {
-      const stream = data.stream().pipeThrough(new DecompressionStream('deflate-raw'))
-      return new Blob([await new Response(stream).arrayBuffer()], { type })
+      // Read in chunks and stop at the declared size: a few kilobytes of crafted data can inflate
+      // to gigabytes, which would all be held in memory.
+      const reader = data.stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader()
+      const chunks: Uint8Array<ArrayBuffer>[] = []
+      for (let length = 0; ; ) {
+        const { done, value } = await reader.read()
+        if (done) break
+        length += value.length
+        if (length > entry.size) {
+          void reader.cancel()
+          throw new Error(`Broken ZIP entry (larger than declared): ${name}`)
+        }
+        chunks.push(value)
+      }
+      return new Blob(chunks, { type })
     }
     throw new Error(`Unsupported ZIP compression method ${entry.method}: ${name}`)
   }
