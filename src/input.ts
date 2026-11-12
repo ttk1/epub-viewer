@@ -16,7 +16,8 @@ export interface InputHost {
   shown(): boolean
   /** The area of the page(s) on the screen, without the empty sides. */
   pagesRect(): { left: number; right: number }
-  followLink(href: string): void
+  /** A link in the document `doc` of the book was clicked. */
+  followLink(href: string, doc: Document): void
   dispatchEvent(event: Event): boolean
 }
 
@@ -135,37 +136,40 @@ export class Input {
   }
 
   /**
-   * Clicks inside the page: a link is followed, the left and right thirds turn the page, and the
-   * rest is passed on as a tap.
+   * Clicks inside the page: a link is followed; otherwise see #clickAt.
    */
   #onClick = (e: MouseEvent): void => {
     // The page of the book before this one, still on the screen while the first page loads.
     if (!this.#host.shown()) return e.preventDefault()
-    // Every kind of link (also <area>, and <a xlink:href> in SVG), so that none navigates the iframe itself.
-    const link = (e.target as Element).closest?.('a, area')
-    const href = link?.getAttribute('href') ?? link?.getAttribute('xlink:href')
-    if (href != null) {
+    const doc = (e.target as Element).ownerDocument
+    // Anything that the browser would follow as a link: <a> and <area> even without an href (an
+    // animation can give one to an SVG <a>), and other elements with an href (in any namespace).
+    // The default is always prevented: the frame must not go anywhere by itself.
+    const link = (e.target as Element).closest?.('a, area, [*|href]')
+    if (link) {
       e.preventDefault()
-      this.#host.followLink(href)
+      const href = link.getAttribute('href') ?? link.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+      if (href != null) this.#host.followLink(href, doc)
       return
     }
-    const doc = (e.target as Element).ownerDocument
     if (this.#selecting(doc)) return
-    // The position within the page(s) as shown: the frame may be scaled, or one of two.
+    // The position on the screen: the frame may be scaled, or one of two.
     const frame = doc.defaultView!.frameElement!
     const rect = frame.getBoundingClientRect()
-    const { left, right } = this.#host.pagesRect()
-    const x = (rect.left + (e.clientX * rect.width) / frame.clientWidth - left) / (right - left)
-    if (!this.#host.options.click || (x >= 1 / 3 && x <= 2 / 3)) this.#host.dispatchEvent(new CustomEvent('tap', { detail: { x } }))
-    else this.#turn(x < 1 / 3 ? 'goLeft' : 'goRight')
+    this.#clickAt(rect.left + (e.clientX * rect.width) / frame.clientWidth)
   }
 
-  /** Clicks on the empty sides of a width-limited page turn pages too. */
+  /** Clicks on the empty room around the page(s) count as clicks on the edge of the page next to them. */
   #onSideClick = (e: MouseEvent): void => {
-    if (!this.#host.options.click || e.target !== this.#stage) return
+    if (e.target === this.#stage) this.#clickAt(e.clientX)
+  }
+
+  /** A click at `clientX` (in the host window): the left and right thirds of the page(s) turn the page, the rest is a tap. */
+  #clickAt(clientX: number): void {
     const { left, right } = this.#host.pagesRect()
-    if (e.clientX < left) this.#turn('goLeft')
-    else if (e.clientX > right) this.#turn('goRight')
+    const x = Math.min(Math.max((clientX - left) / (right - left), 0), 1)
+    if (!this.#host.options.click || (x >= 1 / 3 && x <= 2 / 3)) this.#host.dispatchEvent(new CustomEvent('tap', { detail: { x } }))
+    else this.#turn(x < 1 / 3 ? 'goLeft' : 'goRight')
   }
 
   /**
