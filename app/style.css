@@ -1,7 +1,10 @@
 /* Page layout only; the reader's own styles come with EpubReader. */
 body {
+  height: 100vh; /* for browsers without the dvh unit */
   height: 100dvh;
   margin: 0;
+  /* The page does not scroll, so a touch drag must not start the browser's pull-to-refresh. */
+  overscroll-behavior: none;
 }
 #placeholder {
   position: fixed;
