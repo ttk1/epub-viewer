@@ -60,7 +60,7 @@ docker compose up
 
 - 文字サイズや表示方向、ウィンドウの大きさを変えても、読んでいた文章のあるページがそのまま表示されます。
 - キーは押しっぱなしにしても 1 ページだけ進みます。ごく短い間隔（100ms 以内）の連続入力はチャタリングとみなして無視するので、リモコンでも 1 回押すごとに 1 ページずつめくれます。
-- ツールバーはキーボードでも操作できます（Tab で移動、Enter / Space で決定。目次は ↑ ↓ で項目を移動、Esc で閉じる）。メニューの外をクリックしても閉じます。
+- ツールバーはキーボードでも操作できます（Tab で移動、Enter / Space で決定。目次は ↑ ↓ で項目を移動、Esc で閉じる）。メニューの外をクリックしても閉じます。メニューが開いている間は、キーで後ろのページはめくれません。
 - 読書位置と設定はブラウザ（localStorage）に保存され、次に同じ本を開くと続きから表示されます。読書位置は本の識別子（`dc:identifier`）ごと、識別子がない本は URL やファイル名ごとに保存されます。
 
 ## 組み込む
@@ -90,7 +90,7 @@ npm には公開していません。バージョンタグの付いたリビジ�
 </script>
 ```
 
-`EpubViewer` は `Book` を破棄しません。別の本に切り替えるときや閉じるときは、前の本の `book.destroy()` を呼んでください（`EpubReader` は自分で破棄します）。
+`EpubViewer` は `Book` を破棄しません。閉じるときは `book.destroy()` を呼んでください。別の本に切り替えるときは、新しい本の `open()` が成功してから前の本を破棄します（`open()` が失敗したときは前の本を表示し続けるため）。`EpubReader` は自分で破棄します。
 
 ### 画面ごと使う（EpubReader）
 
@@ -262,7 +262,12 @@ viewer.addEventListener('error', (e) => showMessage(`表示できませんでし
 
 ```js
 const viewer = new EpubViewer(el, { keyboard: false, click: false })
-myKeymap.on('j', () => viewer.next())
+const onKey = (e) => {
+  if (e.key === 'j') viewer.next()
+}
+window.addEventListener('keydown', onKey)
+// 本文をクリックするとフォーカスが本文（iframe）に移り、キーはホストのウィンドウに届かなくなるので、本文の側でも受ける
+viewer.addEventListener('sectionload', (e) => e.detail.doc.defaultView.addEventListener('keydown', onKey))
 viewer.addEventListener('tap', (e) => (e.detail.x < 0.5 ? viewer.goLeft() : viewer.goRight()))
 ```
 
@@ -313,7 +318,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 
 | メソッド・プロパティ | 説明 |
 | --- | --- |
-| `open(book, target?)` | 本を表示する。`target` は `goTo()` と同じ。省略時と、その位置が本にないときは先頭。前に表示していた `Book` は破棄しない。表示できるセクションが 1 つもない本（`book.sections` が空）は reject され、表示は前の本のまま |
+| `open(book, target?)` | 本を表示する。`target` は `goTo()` と同じ。省略時と、その位置が本にないときは先頭。前に表示していた `Book` は破棄しない。表示できるセクションが 1 つもない本（`book.sections` が空）や、最初に表示するセクションを読めない本は reject され、前の本を表示し続ける（ページ送りもそのまま使える） |
 | `goTo(target)` | 移動する。`target` は `BookLocation`（`{ index, progress }`）、目次の `href`、または `{ fraction }`（本全体の中での位置 0〜1）。その位置が本にないときは何もしない。続けて呼ぶと、後から呼んだほうが表示される |
 | `next()` / `prev()` | 次 / 前のページ（セクションの境界もまたぐ）。前の移動（ページの読み込み）が終わるまでと、本を開く前は何もしない |
 | `goLeft()` / `goRight()` | 左 / 右へめくる（`relocate` の `rtl` が `true` のとき、`goLeft()` が次のページ） |
@@ -350,7 +355,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 
 | メソッド・プロパティ | 説明 |
 | --- | --- |
-| `open(source, { key?, location? })` | 本を開いて表示し、`Book` を返す。`location` は `goTo()` の `target` と同じで、省略すると保存された位置（なければ先頭）から。`key` は読書位置の保存キー。読み込みが終わる前にもう一度呼ぶと後の呼び出しが優先され、どちらの呼び出しも後の本を返す |
+| `open(source, { key?, location? })` | 本を開いて表示し、`Book` を返す。`location` は `goTo()` の `target` と同じで、省略すると保存された位置（なければ先頭）から。`key` は読書位置の保存キー。読み込みが終わる前にもう一度呼ぶと後の呼び出しが優先され、どちらの呼び出しも後の本を返す。開けなかったとき（EPUB でない、表示できるページがない、など）は reject され、前の本を表示し続ける |
 | `setSettings(changes)` | 設定を変える（例: `reader.setSettings({ theme: 'sepia' })`）。ツールバーで変えたときと同じく表示に反映され、保存される |
 | `settings` | 現在の設定 |
 | `toolbar` | ツールバーの要素。独自のボタンやリンクを追加できる（直下に置いた `button` / `select` / `a` / `label` にはツールバーの見た目が、`span` には文字用の余白が付く。作品名の要素は `.title`）。`hidden` にすると隠れ、その分ページが広がる |
@@ -377,7 +382,7 @@ TypeScript 用に次の型も export しています: `BookSource`（`openBook()
 
 - 書籍の各ページは sandbox 付きの iframe に表示し、Content-Security-Policy を挿入して、書籍内のスクリプト・埋め込み文書（`<iframe>` など）・外部へのリソース読み込みを禁止しています。ページを別の URL へ移動させる `<meta http-equiv="refresh">` と、文書を置き換える `<?xml-stylesheet?>`、スタイルシート以外の `<link>`（`rel="preconnect"` は、Content-Security-Policy があっても外部のサーバーへ接続させるブラウザがある）も取り除きます。本文として表示するのは XHTML / HTML の文書だけで、マニフェストがそのファイルを別の種類としても登録していても、必ずこの保護を掛けてから表示します。保護をすり抜ける手段になる `<noscript>` と `<template>` は取り除き、文書は UTF-8 として読ませます（書籍が宣言する別の文字コードでは読ませません）。それでも書籍がページを別の場所へ移動させた場合は、そのページを表示せずに `error` イベントで知らせます。
 - 書籍内の SVG など、スクリプトを含みうるファイルには、ページと同じオリジンを持つ blob: URL を使いません（読者が画像を新しいタブで開いても、中のスクリプトがページの権限で動かないように）。
-- ZIP の展開は、ファイルごとに宣言されたサイズを超えた時点で打ち切ります（小さなデータが巨大に膨らむ細工への対策）。
+- ZIP の展開は、ファイルごとに宣言されたサイズを超えた時点で打ち切ります（小さなデータが巨大に膨らむ細工への対策）。ただし、内容そのものが重い本（巨大な章、ブラウザの処理に時間のかかる細工）でページが重くなることまでは防げません。信頼できない本を扱うサイトでは、受け付けるファイルの大きさを制限してください。
 - 書籍内のリンク（SVG 内のリンクや `<area>` を含む）は、本の中への移動か `http:` / `https:` / `mailto:` の外部リンクだけを扱い、`javascript:` などの URL は開きません。リンクのクリックはすべてビューアが受け取り、ブラウザに直接たどらせません（中クリックで新しいタブに開くこともさせません）。
 - ランタイム依存はありません。開発用の依存（TypeScript、Playwright）はバージョンとハッシュを固定し、公開から 7 日未満の版はインストールしない設定にしています（`.npmrc`）。
 - 組み込み先のページに Content-Security-Policy ヘッダーを付ける場合は、書籍の表示に blob: URL を使うため、少なくとも `frame-src blob:`、`img-src blob: data:`、`style-src blob: 'unsafe-inline'`、`font-src blob: data:`、`media-src blob: data:` を許可してください（`default-src` で許可していれば不要）。`EpubReader` はツールバーのスタイルを `<style>` 要素で追加するので、`style-src 'unsafe-inline'` も必要です。
