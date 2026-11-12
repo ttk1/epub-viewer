@@ -116,6 +116,7 @@ const STYLE = `
     position: relative; z-index: 1; display: flex; gap: 2px; align-items: center;
     padding: 4px 8px; border-bottom: 1px solid var(--line);
   }
+  .epub-reader .toolbar[hidden] { display: none; } /* the app may hide it, e.g. on a tap */
   /* Progress through the book, drawn over the border. */
   .epub-reader .toolbar::after {
     content: ''; position: absolute; left: 0; bottom: -1px; width: calc(var(--progress, 0) * 100%); height: 2px;
