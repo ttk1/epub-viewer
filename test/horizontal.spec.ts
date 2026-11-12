@@ -15,6 +15,7 @@ test.describe('general EPUB 2 (horizontal)', () => {
     await expect.poll(() => evaluate(page, () => getComputedStyle(document.body).fontFamily)).toBe('serif') // via @import
     await expect(page.locator('.toc-list button')).toHaveText(['Chapter 1', 'Chapter 2', 'Section 2.1'])
 
+    await press(page, 'Escape') // the settings menu: keys do not turn the page behind it
     await press(page, 'ArrowRight')
     await expect(page.locator('.progress')).toHaveText(/^2 \//)
     const width = await evaluate(page, () => document.documentElement.offsetWidth)

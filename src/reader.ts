@@ -83,9 +83,9 @@ const TOOLBAR = `
         <div class="row">
           <span>文字サイズ</span>
           <span class="choices">
-            <button type="button" class="font-down" title="文字を小さく">A−</button>
+            <button type="button" class="font-down" title="文字を小さく" aria-label="文字を小さく">A−</button>
             <output class="font-size"></output>
-            <button type="button" class="font-up" title="文字を大きく">A＋</button>
+            <button type="button" class="font-up" title="文字を大きく" aria-label="文字を大きく">A＋</button>
           </span>
         </div>
         ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
@@ -224,7 +224,11 @@ export class EpubReader {
     this.#storageKey = storageKey
     this.toolbar = root.querySelector('.toolbar')!
     this.viewer = new EpubViewer(root.querySelector('.viewer')!, viewer)
-    this.#settings = { ...DEFAULT_SETTINGS, ...settings, ...this.#load<ReaderSettings>('settings') }
+    // Of what is saved, only settings of the right kind: a font size that is not a number could not be changed any more.
+    const usable = ([key, value]: [string, unknown]) =>
+      Object.hasOwn(DEFAULT_SETTINGS, key) && typeof value === typeof DEFAULT_SETTINGS[key as keyof ReaderSettings] && value === value
+    const saved = Object.fromEntries(Object.entries(this.#load<object>('settings') ?? {}).filter(usable))
+    this.#settings = { ...DEFAULT_SETTINGS, ...settings, ...saved }
 
     this.viewer.addEventListener('relocate', (e) => {
       const { index, page, pages, fraction } = e.detail
@@ -239,7 +243,9 @@ export class EpubReader {
     })
     this.toolbar.addEventListener('click', this.#onClick)
     this.toolbar.addEventListener('change', this.#onChange)
-    this.toolbar.addEventListener('keydown', this.#onKeydown)
+    // On the document: after a click that opens a menu, the focus is not in the toolbar. The
+    // document gets a key before the window, where the viewer listens.
+    doc.addEventListener('keydown', this.#onKeydown)
     this.toolbar.addEventListener('toggle', this.#onToggle, true) // toggle does not bubble
     this.toolbar.addEventListener('submit', (e) => e.preventDefault()) // Enter in the settings form
     doc.addEventListener('click', this.#dismiss)
@@ -283,23 +289,35 @@ export class EpubReader {
       book.destroy()
       return this.#opening ?? book
     }
-    this.#book?.destroy()
+    // The book before is kept until this one is on the screen: if it cannot be shown, that one stays.
+    const before = { book: this.#book, key: this.#positionKey }
     this.#book = book
     // A File is told by its name, not by `instanceof`: one dropped on the page comes from the iframe's realm.
     const name = typeof source === 'string' || source instanceof URL ? String(source) : (source as Partial<File>).name
-    this.#positionKey = key ?? (book.metadata.identifier || name || book.metadata.title)
+    // Not all of a name of any length: it is the book's to choose, and the storage is not the reader's alone to fill.
+    this.#positionKey = key ?? (book.metadata.identifier || name || book.metadata.title).slice(0, 200)
+    // What is saved may not be a position (it is not ours alone to write): such a thing is not used.
+    const saved = this.#load<BookLocation>(`position:${this.#positionKey}`)
+    try {
+      await this.viewer.open(book, location ?? (typeof saved?.index === 'number' && typeof saved.progress === 'number' ? saved : undefined))
+    } catch (error) {
+      book.destroy()
+      if (this.#book === book) [this.#book, this.#positionKey] = [before.book, before.key]
+      throw error
+    }
+    before.book?.destroy()
+    if (!isLatest()) return this.#opening ?? book
     this.#part('title').textContent = book.metadata.title
     this.#root.dataset.layout = book.metadata.layout // for the settings shown
     this.#renderToc(book)
-    // What is saved may not be a position (it is not ours alone to write): such a thing is not used.
-    const saved = this.#load<BookLocation>(`position:${this.#positionKey}`)
-    await this.viewer.open(book, location ?? (typeof saved?.index === 'number' && typeof saved.progress === 'number' ? saved : undefined))
-    return isLatest() ? book : (this.#opening ?? book)
+    if (this.viewer.location) this.#markCurrent(this.viewer.location.index)
+    return book
   }
 
   /** Removes the reader from `root` and releases the book. */
   destroy(): void {
     this.#root.ownerDocument.removeEventListener('click', this.#dismiss)
+    this.#root.ownerDocument.removeEventListener('keydown', this.#onKeydown)
     this.#systemDark.removeEventListener('change', this.#apply)
     this.#menuObserver.disconnect()
     this.#opening = undefined // a book that is still being opened is not shown
@@ -365,18 +383,27 @@ export class EpubReader {
     this.setSettings({ [key]: typeof DEFAULT_SETTINGS[key] === 'number' ? Number(input.value) : input.value })
   }
 
-  /** Keys inside the menus. Handled keys are marked with preventDefault(), so they don't turn pages. */
+  /**
+   * Keys while a menu is open, wherever the focus is. The keys that turn pages are marked with
+   * preventDefault(), so that the viewer leaves them alone: the page behind a menu does not turn.
+   */
   #onKeydown = (e: KeyboardEvent): void => {
+    const menu = this.toolbar.querySelector('details[open]')
+    if (!menu) return
     const target = e.target as HTMLElement
-    const menu = target.closest('details[open]')
-    if (e.key === 'Escape' && menu) {
+    if (e.key === 'Escape') {
       e.preventDefault()
       this.#closeMenus()
       menu.querySelector('summary')!.focus()
     } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && target.matches('.toc-list button')) {
       e.preventDefault()
-      const next = e.key === 'ArrowDown' ? target.nextElementSibling : target.previousElementSibling
-      ;(next as HTMLElement | null)?.focus()
+      // Headings that lead nowhere (disabled) cannot take the focus: on to the entry after them.
+      const step = e.key === 'ArrowDown' ? 'nextElementSibling' : 'previousElementSibling'
+      let entry = target[step] as HTMLButtonElement | null
+      while (entry?.disabled) entry = entry[step] as HTMLButtonElement | null
+      entry?.focus()
+    } else if (/^(Arrow|Page)/.test(e.key) ? !target.matches('input') : e.key === ' ' && !target.closest('button, summary, input')) {
+      e.preventDefault() // not the arrow keys of the radio buttons, nor Space on a control
     }
   }
 

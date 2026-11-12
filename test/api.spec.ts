@@ -310,6 +310,57 @@ test('EpubReader works with saved things that are not what it would have written
   expect(result.background).toBe('rgb(255, 255, 255)') // the light theme
 })
 
+test('EpubReader does not use saved settings of the wrong kind', async ({ page }) => {
+  await page.goto('/app/')
+  await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const root = document.createElement('div')
+    root.style.height = '100vh'
+    document.body.replaceChildren(root)
+    new EpubReader(root, { storage: { getItem: () => '{"fontSize":"large","maxWidth":800}', setItem: () => {} }, settings: { fontSize: 30 } })
+  })
+  await page.locator('.settings summary').click()
+  await expect(page.locator('.font-size')).toHaveText('30') // the size given by the app, not what was saved
+  await page.locator('.font-up').click()
+  await expect(page.locator('.font-size')).toHaveText('36')
+  await expect(page.locator('input[name=maxWidth]:checked')).toHaveValue('800') // what can be used is used
+})
+
+test('a destroyed viewer leaves nothing on its container', async ({ page }) => {
+  await page.goto('/app/')
+  const left = await withViewer(page, async (viewer, { openBook, themes }, container) => {
+    viewer.setOptions({ theme: themes.dark })
+    await viewer.open(await openBook('/samples/general.epub'))
+    viewer.destroy()
+    return { style: container.getAttribute('style'), children: container.childElementCount }
+  })
+  expect(left).toEqual({ style: 'position: fixed; inset: 0px;', children: 0 })
+})
+
+test('keys of the app turn pages also after a click on the page, as in the README', async ({ page }) => {
+  await page.goto('/app/')
+  await page.evaluate(async () => {
+    const { EpubViewer, openBook } = await import('/dist/src/index.js' as string)
+    const container = document.createElement('div')
+    container.style.cssText = 'position: fixed; inset: 0'
+    document.body.append(container)
+    const viewer = new EpubViewer(container, { keyboard: false, click: false })
+    viewer.addEventListener('relocate', (e: CustomEvent) => (document.title = `page ${e.detail.page + 1}`))
+    // The example of the README.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'j') viewer.next()
+    }
+    window.addEventListener('keydown', onKey)
+    viewer.addEventListener('sectionload', (e: CustomEvent) => e.detail.doc.defaultView.addEventListener('keydown', onKey))
+    await viewer.open(await openBook('/samples/general.epub'))
+  })
+  await page.keyboard.press('j')
+  await expect(page).toHaveTitle('page 2')
+  await page.mouse.click(640, 400) // the focus goes into the page of the book
+  await page.keyboard.press('j')
+  await expect(page).toHaveTitle('page 3')
+})
+
 test('EpubReader does not take a saved theme name for a theme because objects have something by that name', async ({ page }) => {
   await page.goto('/app/')
   const background = await page.evaluate(async () => {

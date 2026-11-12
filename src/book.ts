@@ -235,15 +235,20 @@ export class Book {
     // The images in srcset would not be found (they are relative to a blob: URL now), and browsers
     // do not fall back to src then. So only src, which is rewritten below, is kept.
     for (const el of doc.querySelectorAll('[srcset]')) el.removeAttribute('srcset')
-    // A <link> other than a stylesheet has no use in a book, but can name a server for the browser
-    // to connect to ahead of time (rel="preconnect"), which the CSP does not stop in WebKit.
-    for (const el of doc.querySelectorAll('link:not([rel~="stylesheet" i])')) el.remove()
+    // A <link> is a stylesheet and nothing else: other kinds have no use in a book, but can name a
+    // server for the browser to connect to ahead of time (rel="preconnect"), which the CSP does
+    // not stop in WebKit. Nor may a stylesheet be one of them as well (rel="stylesheet preconnect").
+    for (const el of doc.querySelectorAll('link')) {
+      const rel = relOf(el).filter((kind) => STYLESHEET_RELS.includes(kind))
+      if (rel.includes('stylesheet')) el.setAttribute('rel', rel.join(' '))
+      else el.remove()
+    }
     for (const el of doc.querySelectorAll(UNSAFE_ELEMENTS)) el.remove()
 
     const targets = [
       ['[src]', 'src'],
       ['[poster]', 'poster'],
-      ['link[rel~="stylesheet" i][href]', 'href'], // not rel="next" and the like, which would pull in the whole book
+      ['link[href]', 'href'], // stylesheets only (see above): not rel="next" and the like, which would pull in the whole book
       ['image', 'href'],
       ['image', 'xlink:href'],
     ]
@@ -267,7 +272,10 @@ export class Book {
     // element (e.g. a <meta> that takes the page elsewhere). Nothing is shown of a document in
     // which something that was removed above is there again.
     const again = parse(type, html)
-    const unsafe = again.querySelector(UNSAFE_ELEMENTS) ?? [...again.querySelectorAll('meta[http-equiv]')].find(isRefresh)
+    const unsafe =
+      again.querySelector(UNSAFE_ELEMENTS) ??
+      [...again.querySelectorAll('meta[http-equiv]')].find(isRefresh) ??
+      [...again.querySelectorAll('link')].find((link) => !isStylesheet(link))
     return textBlob(unsafe ? `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">` : html, type)
   }
 
@@ -278,12 +286,14 @@ export class Book {
       .replace(/-epub-(writing-mode|text-orientation|text-emphasis|word-break|line-break|hyphens)/g, '$1')
     // No "(" in a URL, and a limit on its length: without them, a long run of "url(" without
     // an end takes this a time that grows with the square of its length.
-    const pattern = /url\(\s*(['"]?)([^'"()]{1,4000})\1\s*\)|@import\s+(['"])([^'"]{1,4000})\3/g
+    // Nor white space in a URL without quotes (there is none in CSS): a run of spaces could be
+    // matched both as the URL and as the space around it, in as many ways as it is long.
+    const pattern = /url\(\s*(?:(['"])([^'"()]{1,4000})\1|([^'"()\s]{1,4000}))\s*\)|@import\s+(['"])([^'"]{1,4000})\4/g
     const urls = await Promise.all(
-      [...css.matchAll(pattern)].map((m) => this.#resolveUrl((m[2] ?? m[4]).trim(), path)),
+      [...css.matchAll(pattern)].map((m) => this.#resolveUrl((m[2] ?? m[3] ?? m[5]).trim(), path)),
     )
     let i = 0
-    return css.replace(pattern, (_, quote) => (quote === undefined ? `@import "${urls[i++]}"` : `url("${urls[i++]}")`))
+    return css.replace(pattern, (match) => (match.startsWith('@') ? `@import "${urls[i++]}"` : `url("${urls[i++]}")`))
   }
 
   /** Converts a reference found in the file at `base` into a blob: URL (external URLs are kept as-is). */
@@ -332,7 +342,12 @@ function parseXml(source: string): Document {
  */
 const UNSAFE_ELEMENTS = 'noscript, template'
 /** Types of files that cannot hold scripts, whatever is in them: bitmap images, fonts, audio and video. */
-const INERT_TYPES = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|font\/|application\/(font-|x-font-|vnd\.ms-opentype)|audio\/|video\/)/
+// The whole type must match: of "image/png,text/html", browsers take the part after the comma.
+const INERT_TYPES = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|(font|audio|video)\/[a-z0-9.-]+|application\/(font-[a-z0-9.-]+|x-font-[a-z0-9.-]+|vnd\.ms-opentype))$/
+/** What the rel of a <link> may hold. */
+const STYLESHEET_RELS = ['stylesheet', 'alternate']
+const relOf = (link: Element) => (link.getAttribute('rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+const isStylesheet = (link: Element) => relOf(link).includes('stylesheet') && relOf(link).every((kind) => STYLESHEET_RELS.includes(kind))
 const isRefresh = (meta: Element) => meta.getAttribute('http-equiv')!.trim().toLowerCase() === 'refresh'
 
 /**

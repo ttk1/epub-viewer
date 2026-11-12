@@ -33,8 +33,9 @@ const SWIPE_SLOPE = 1.5
 /**
  * Anything that the browser would follow as a link: <a> and <area> even without an href (an
  * animation can give one to an SVG <a>), and other elements with an href (in any namespace).
+ * Also <use>, likewise without an href: a click on a link that it draws is a click on the <use>.
  */
-const LINKS = 'a, area, [*|href]'
+const LINKS = 'a, area, use, [*|href]'
 
 type Listen = 'addEventListener' | 'removeEventListener'
 

@@ -69,10 +69,10 @@ export const xhtml = (body: string, head = '') =>
 /**
  * The bytes of a small EPUB made for one test, where the samples do not have what it needs (e.g.
  * the address of a server that only the test knows). `manifest` and `spine` are the <item> and
- * <itemref> elements, `direction` the side that the book says its pages go to; give the bytes to
+ * <itemref> elements, `direction` the side that the book says its pages go to, `identifier` its dc:identifier; give the bytes to
  * openBook() as `new Uint8Array(bytes)`.
  */
-export function makeBook(files: [name: string, content: string][], manifest: string, spine: string, direction = 'ltr'): number[] {
-  const opf = `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Test</dc:title><dc:identifier id="id">test</dc:identifier></metadata><manifest>${manifest}</manifest><spine page-progression-direction="${direction}">${spine}</spine></package>`
+export function makeBook(files: [name: string, content: string][], manifest: string, spine: string, direction = 'ltr', identifier = 'test'): number[] {
+  const opf = `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Test</dc:title><dc:identifier id="id">${identifier}</dc:identifier></metadata><manifest>${manifest}</manifest><spine page-progression-direction="${direction}">${spine}</spine></package>`
   return [...createZip([['mimetype', 'application/epub+zip', true], ['META-INF/container.xml', CONTAINER], ['content.opf', opf], ...files])]
 }

@@ -14,11 +14,12 @@ async function show(index: number, atEnd = false): Promise<void> {
   loading = true
   try {
     const next = await openBook(episodes[index])
+    await viewer.open(next, atEnd ? { index: -1, progress: 1 } : undefined)
+    // Only now: had the episode failed to open, the one before would still be shown.
     book?.destroy()
     book = next
     current = index
     document.getElementById('status')!.textContent = `${book.metadata.title}（${index + 1} / ${episodes.length} 話）`
-    await viewer.open(book, atEnd ? { index: -1, progress: 1 } : undefined)
   } finally {
     loading = false
   }

@@ -160,16 +160,25 @@ export class EpubViewer extends EventTarget {
   async open(book: Book, target?: BookTarget): Promise<void> {
     // e.g. a book of SVG documents only, which are not shown. The book shown before stays.
     if (!book.sections.length) throw new Error('The book has nothing to show: no XHTML or HTML documents in its spine')
+    const before = { book: this.#book, index: this.#index, shown: this.#shown }
     this.#book = book
     this.#index = -1
     this.#shown = []
     this.#committed = ++this.#navigation // navigations of the book before give up
     const start = { index: Math.max(0, book.sections.findIndex((s) => s.linear)), progress: 0 }
-    await this.goTo(target ?? start)
-    // A target that is not in this book, e.g. one saved for an older edition: don't leave the page
-    // empty. (Unless another book has been opened meanwhile: that one is not ours to move.)
-    // Nor while another move in this book is under way: that is where the caller wants to be.
-    if (this.#book === book && this.#index < 0 && !this.#busy) await this.goTo(start)
+    try {
+      await this.goTo(target ?? start)
+      // A target that is not in this book, e.g. one saved for an older edition: don't leave the page
+      // empty. (Unless another book has been opened meanwhile: that one is not ours to move.)
+      // Nor while another move in this book is under way: that is where the caller wants to be.
+      if (this.#book === book && this.#index < 0 && !this.#busy) await this.goTo(start)
+    } catch (error) {
+      // Nothing of this book has come to the screen (e.g. its first section cannot be read): the
+      // page of the book before is still there, and that book goes on. Left as it is, no page
+      // could be turned any more.
+      if (this.#book === book && this.#index < 0) [this.#book, this.#index, this.#shown] = [before.book, before.index, before.shown]
+      throw error
+    }
   }
 
   /** Moves to `target`. Does nothing if that is not in the book. */
@@ -217,6 +226,7 @@ export class EpubViewer extends EventTarget {
     this.#resizeObserver.disconnect()
     this.#input.destroy()
     this.#stage.remove()
+    for (const property of ['touch-action', 'background']) this.#container.style.removeProperty(property) // set by the viewer
     this.#end()
   }
 

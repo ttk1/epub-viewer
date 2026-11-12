@@ -58,6 +58,25 @@ test('Space and Enter on a focused toolbar control operate it instead of turning
   await press(page, 'Enter')
   await expect(page.locator('.font-size')).toHaveText('65')
   await expect(page.locator('.pages')).toHaveText(/^1 \//)
+  // Nor do the keys that turn pages reach the page behind the open menu.
+  await press(page, 'ArrowDown')
+  await press(page, 'ArrowLeft')
+  await expect(page.locator('.pages')).toHaveText(/^1 \//)
+  await expect(page.locator('.settings .panel')).toBeVisible()
+})
+
+test('a menu opened with the mouse is closed by Escape, and keys do not turn the page behind it', async ({ page }) => {
+  await page.goto('/app/?url=/samples/nepub.epub')
+  await expect(page.locator('.progress')).toHaveText(/^1 \//)
+  await page.locator('.settings summary').click() // the focus does not stay in the toolbar after a click
+  await expect(page.locator('.settings .panel')).toBeVisible()
+  await press(page, 'ArrowLeft')
+  await press(page, 'Space')
+  await expect(page.locator('.pages')).toHaveText(/^1 \//)
+  await press(page, 'Escape')
+  await expect(page.locator('.settings .panel')).toBeHidden()
+  await press(page, 'ArrowLeft') // and the keys turn pages again
+  await expect(page.locator('.pages')).toHaveText(/^2 \//)
 })
 
 test('series example opens the next / previous episode at the book boundaries', async ({ page }) => {
