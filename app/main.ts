@@ -22,12 +22,19 @@ async function open(source: BookSource): Promise<void> {
 input.addEventListener('change', () => {
   if (input.files?.[0]) void open(input.files[0])
 })
-document.addEventListener('dragover', (e) => e.preventDefault())
-document.addEventListener('drop', (e) => {
-  e.preventDefault()
-  const file = e.dataTransfer?.files[0]
-  if (file) void open(file)
-})
+function acceptDrops(doc: Document): void {
+  doc.addEventListener('dragover', (e) => e.preventDefault())
+  doc.addEventListener('drop', (e) => {
+    e.preventDefault()
+    const file = e.dataTransfer?.files[0]
+    if (file) void open(file)
+  })
+}
+// Most drops land on the page, which is a document of its own inside the reader's iframe:
+// the empty one before a book is opened, then one per section.
+acceptDrops(document)
+acceptDrops(document.querySelector<HTMLIFrameElement>('#reader iframe')!.contentDocument!)
+reader.viewer.addEventListener('sectionload', (e) => acceptDrops(e.detail.doc))
 reader.viewer.addEventListener('error', (e) => alert(`ページを表示できませんでした: ${e.detail.error}`))
 
 const url = new URLSearchParams(location.search).get('url')
