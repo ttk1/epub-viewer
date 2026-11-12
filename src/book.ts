@@ -149,9 +149,16 @@ export class Book {
     this.#documents = new Set(sections.map((section) => section.href))
   }
 
-  /** Cover image, if the book declares one. */
+  /**
+   * Cover image, if the book declares one: a bitmap image, or an SVG image (type "image/svg+xml",
+   * which can hold scripts: see the README before giving it a blob: URL).
+   */
   async loadCover(): Promise<Blob | undefined> {
-    return this.#cover ? this.#zip.read(this.#cover, this.#types.get(this.#cover)) : undefined
+    const type = this.#types.get(this.#cover ?? '') ?? ''
+    // Images only. A "cover" of another type, or of none, can be an HTML document: with the blob:
+    // URL that an app would give it, it runs as the app when the reader opens it in a tab of its own.
+    if (!this.#cover || !(type === 'image/svg+xml' || (type.startsWith('image/') && INERT_TYPES.test(type)))) return undefined
+    return this.#zip.read(this.#cover, type)
   }
 
   /**
@@ -226,7 +233,13 @@ export class Book {
       head = doc.createElementNS(XHTML, 'head')
       doc.documentElement.prepend(head)
     }
-    head.prepend(csp)
+    // Firefox looks up the host names of the links in a page ahead of time, also in a blob:
+    // document of an https: page (where it would not for the page itself). With names made up for
+    // it, a book could learn who reads it, and when. Once off, the book cannot turn this on again.
+    const noPrefetch = doc.createElementNS(XHTML, 'meta')
+    noPrefetch.setAttribute('http-equiv', 'x-dns-prefetch-control')
+    noPrefetch.setAttribute('content', 'off')
+    head.prepend(csp, noPrefetch)
     // <?xml-stylesheet?>: an XSLT stylesheet would replace the document with one that has no CSP.
     for (const node of [...doc.childNodes]) {
       if (node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) node.remove()
@@ -317,11 +330,17 @@ export class Book {
   }
 
   /** Whether `from` is `target`, or refers to it through the references found so far. */
-  #refersTo(from: string, target: string, seen = new Set<string>()): boolean {
+  #refersTo(from: string, target: string, seen = new Set<string>(), steps = { left: 1000 }): boolean {
     if (from === target) return true
+    // A search can go through all the references found so far, and there is one for every
+    // reference: hundreds of stylesheets that each import all the others (no book has that,
+    // unless made to) took many seconds. A search that does not end within a number of steps,
+    // far more than a book needs, is taken as having found a reference back (it is not loaded).
+    if (--steps.left < 0) return true
     if (seen.has(from)) return false
     seen.add(from)
-    return [...(this.#references.get(from) ?? [])].some((path) => this.#refersTo(path, target, seen))
+    for (const path of this.#references.get(from) ?? []) if (this.#refersTo(path, target, seen, steps)) return true
+    return false
   }
 }
 
@@ -393,8 +412,10 @@ function parseNav(doc: Document, base: string): TocItem[] {
 function parseNcx(doc: Document, base: string): TocItem[] {
   const points = (parent: Element): TocItem[] =>
     children(parent, 'navPoint').map((point) => ({
-      label: text(first(point, 'text')),
-      href: resolvePath(first(point, 'content')?.getAttribute('src') ?? '', base) ?? '',
+      // Children only: a search through all that is under the entry would go through the entries
+      // under it as well, again for each of them (a deep table of contents took many seconds).
+      label: text(children(children(point, 'navLabel')[0] ?? point, 'text')[0]),
+      href: resolvePath(children(point, 'content')[0]?.getAttribute('src') ?? '', base) ?? '',
       children: points(point),
     }))
   const navMap = first(doc, 'navMap')

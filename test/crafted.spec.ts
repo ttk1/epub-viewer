@@ -217,3 +217,75 @@ test('the arrow keys in the table of contents pass over headings that lead nowhe
   await page.keyboard.press('ArrowUp')
   await expect(page.getByRole('button', { name: 'A', exact: true })).toBeFocused()
 })
+
+// The cover is given to the app as it is in the archive. Shown on a shelf by a blob: URL, as is
+// usual for a Blob, and opened by the reader in a tab of its own, an HTML "cover" ran as the host.
+for (const type of ['', 'text/html', 'application/xhtml+xml', 'image/png,text/html']) {
+  test(`a cover declared as "${type}" does not run as the host when opened in a tab of its own`, async ({ page }) => {
+    const cover = '<html xmlns="http://www.w3.org/1999/xhtml"><body><script>localStorage.setItem("pwned", location.origin)</script>cover</body></html>'
+    const manifest = `${PAGE}<item id="c" href="cover.html" media-type="${type}" properties="cover-image"/>`
+    const bytes = makeBook([['a.xhtml', xhtml(text)], ['cover.html', cover]], manifest, '<itemref idref="a"/>')
+    // As the README tells apps to do: SVG as a data: URL, the rest as a blob: URL.
+    const url = await open(page, bytes, async (_viewer, book) => {
+      const blob: Blob | undefined = await book.loadCover()
+      return blob && blob.type !== 'image/svg+xml' ? URL.createObjectURL(blob) : ''
+    })
+    if (url) {
+      const popup = page.waitForEvent('popup')
+      await page.evaluate((url) => void window.open(url), url) // "open image in new tab"
+      await (await popup).waitForLoadState().catch(() => {})
+      await page.waitForTimeout(1000)
+    }
+    expect(await page.evaluate(() => localStorage.getItem('pwned'))).toBeNull()
+  })
+}
+
+// Firefox looks up the names of the links in a page ahead of time (DNS prefetch), also for a
+// blob: document of an https: page, where it would not for the page itself. A book could tell who
+// reads it by the names that it makes up. The browser's own setting can only be turned off.
+test('the documents of the book turn off DNS prefetching before anything else', async ({ page }) => {
+  const head = '<meta http-equiv="x-dns-prefetch-control" content="on"/>'
+  await open(page, makeBook([['a.xhtml', xhtml(`${text}<a href="http://example.invalid/">x</a>`, head)]], PAGE, '<itemref idref="a"/>'))
+  const metas = await content(page).evaluate(() =>
+    [...document.querySelectorAll('meta[http-equiv]')].map((m) => [m.getAttribute('http-equiv')!.toLowerCase(), m.getAttribute('content')!.toLowerCase()]),
+  )
+  // Right after the CSP, before what the book says ("off" cannot be turned on again).
+  expect(metas[0][0]).toBe('content-security-policy')
+  expect(metas[1]).toEqual(['x-dns-prefetch-control', 'off'])
+})
+
+// Reading an NCX took time in proportion to (depth of the entries) × (size of the file): every
+// entry searched all of what is under it for its label.
+test('a table of contents of nested entries over a large NCX is read in time proportional to its size', async ({ page }) => {
+  const depth = 1000
+  const entries = Array.from({ length: depth }, (_, i) => `<navPoint id="p${i}"><navLabel><text>${i}</text></navLabel><content src="a.xhtml"/>`).join('')
+  const ncx = `<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><navMap>${entries}<navLabel>${'<text/>'.repeat(200000)}</navLabel>${'</navPoint>'.repeat(depth)}</navMap></ncx>`
+  const bytes = makeBook([['a.xhtml', xhtml(text)], ['toc.ncx', ncx]], `${PAGE}<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`, '<itemref idref="a"/>')
+  const ms = await page.evaluate(async (bytes) => {
+    const { openBook } = await import('/dist/src/index.js' as string)
+    const start = performance.now()
+    const book = await openBook(new Uint8Array(bytes))
+    if (book.toc[0]?.label !== '0') throw new Error('table of contents not read')
+    return performance.now() - start
+  }, bytes)
+  expect(ms).toBeLessThan(3000) // 13–23 s before; about 0.1–0.8 s (mostly the browser's XML parser) after
+})
+
+// The search for references back to a file (#refersTo) walked all the references found so far,
+// for every reference: stylesheets that import many others took time growing with the 4th power of their number.
+test('stylesheets that import many others are rewritten in time proportional to their size', async ({ page }) => {
+  const k = 300 // each imports all those before it: 45 000 @imports, about 900 KB, no cycle
+  const files: [string, string][] = []
+  for (let i = 0; i < k; i++) files.push([`c${i}.css`, Array.from({ length: i }, (_, j) => `@import "c${j}.css";`).join('\n') + `\n.c${i} { color: red }`])
+  const head = `<style>${files.map(([name]) => `@import "${name}";`).join('')}</style>`
+  const manifest = PAGE + files.map(([name], i) => `<item id="s${i}" href="${name}" media-type="text/css"/>`).join('')
+  const bytes = makeBook([['a.xhtml', xhtml(text, head)], ...files], manifest, '<itemref idref="a"/>')
+  const ms = await page.evaluate(async (bytes) => {
+    const { openBook } = await import('/dist/src/index.js' as string)
+    const book = await openBook(new Uint8Array(bytes))
+    const start = performance.now()
+    await book.getUrl('a.xhtml')
+    return performance.now() - start
+  }, bytes)
+  expect(ms).toBeLessThan(5000) // 3–13 s before, 0.2–0.6 s now, when run alone (the limit leaves room for the other tests running)
+})
