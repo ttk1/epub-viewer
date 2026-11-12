@@ -318,7 +318,8 @@ export class EpubReader {
   #apply = (): void => {
     const settings = this.#settings
     const name = settings.theme === 'system' ? (this.#systemDark.matches ? 'dark' : 'light') : settings.theme
-    const theme = themes[name] ?? themes.light // a saved setting may be a name that is not known (any more)
+    // A saved setting may be a name that is not known (any more), or one that every object has ("constructor").
+    const theme = Object.hasOwn(themes, name) ? themes[name] : themes.light
     const { style } = this.#root
     style.setProperty('--bg', theme.background)
     style.setProperty('--fg', theme.color)

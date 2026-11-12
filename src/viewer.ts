@@ -25,7 +25,7 @@ export interface RelocateDetail extends BookLocation {
   pages: number
   /** Estimated progress through the whole book, up to the end of the page: 1 on the last page. `goTo({ fraction })` leads back here. */
   fraction: number
-  /** Pages progress to the left (vertical text, manga): goLeft() is next(). For the direction of a slider or of buttons. */
+  /** Pages progress to the left (vertical text, and books opened from the right such as manga): goLeft() is next(). For the direction of a slider or of buttons. */
   rtl: boolean
   /** The sections on the screen: one, or the two pages of a spread of a fixed-layout book (`index` is the first). */
   indices: number[]
@@ -111,6 +111,11 @@ export class EpubViewer extends EventTarget {
   #committed = 0
   /** The latest navigation is under way: page turns by the user are ignored meanwhile. */
   #busy = false
+  /** The frame shown has been emptied, as the book took it elsewhere (see #loadFrame): there is nothing to lay out. */
+  #emptied = false
+  /** Settled by destroy(), for those who wait for frames that will not load any more. */
+  #end!: () => void
+  readonly #destroyed = new Promise<void>((resolve) => (this.#end = resolve))
 
   /** `container` must have a size (e.g. width/height set by CSS); the viewer fills it. */
   constructor(container: HTMLElement, options: Partial<ViewerOptions> = {}) {
@@ -153,6 +158,8 @@ export class EpubViewer extends EventTarget {
 
   /** Shows `book` at `target`, or at the beginning. The Book shown before is not destroyed. */
   async open(book: Book, target?: BookTarget): Promise<void> {
+    // e.g. a book of SVG documents only, which are not shown. The book shown before stays.
+    if (!book.sections.length) throw new Error('The book has nothing to show: no XHTML or HTML documents in its spine')
     this.#book = book
     this.#index = -1
     this.#shown = []
@@ -210,6 +217,7 @@ export class EpubViewer extends EventTarget {
     this.#resizeObserver.disconnect()
     this.#input.destroy()
     this.#stage.remove()
+    this.#end()
   }
 
   // ---- What kind of book, and which way it goes
@@ -221,10 +229,12 @@ export class EpubViewer extends EventTarget {
 
   /** Pages progress to the left. */
   get #rtl(): boolean {
-    const { direction } = this.#options
-    return this.#fixed
-      ? (direction === 'auto' ? this.#book!.metadata.direction : direction) === 'rtl'
-      : this.#pagination.writingMode === 'vertical-rl'
+    const { direction, writingMode } = this.#options
+    const book = this.#book?.metadata.direction
+    if (this.#fixed) return (direction === 'auto' ? book : direction) === 'rtl'
+    // Vertical lines go to the left. So do the horizontal pages of a book that goes to the left (a
+    // cover or a colophon among vertical text), unless horizontal text is what the reader asked for.
+    return this.#pagination.writingMode === 'vertical-rl' || (writingMode === 'auto' && book === 'rtl')
   }
 
   /** Fixed layout: the pages (as indices of sections) shown together, in reading order. */
@@ -292,6 +302,7 @@ export class EpubViewer extends EventTarget {
           // way that is not known (the known ones are closed in book.ts and input.ts): that page is not shown.
           if (doc?.URL === 'about:blank') return
           iframe.src = 'about:blank'
+          if (this.#frames.includes(iframe)) this.#emptied = true
           this.dispatchEvent(new CustomEvent('error', { detail: { error: new Error('The book tried to leave its page') } }))
         } else if (doc && doc.URL !== 'about:blank') {
           loaded = true
@@ -348,7 +359,7 @@ export class EpubViewer extends EventTarget {
       // First, while nothing has changed yet: if this throws, the current page, or another
       // navigation that is under way, stays as it is.
       const indices = this.#shownWith(index)
-      const shown = indices.join() === this.#shown.join()
+      const shown = !this.#emptied && indices.join() === this.#shown.join() // an emptied frame is loaded anew
       const urls = shown ? [] : await Promise.all(indices.map((i) => book.getUrl(book.sections[i].href))).catch((error) => error as Error)
       // A navigation started after this one has changed the page already (or another book was
       // opened, or the viewer destroyed): the one asked for last wins, not the one ready last.
@@ -359,11 +370,13 @@ export class EpubViewer extends EventTarget {
         // Loaded in frames of their own, out of sight, and put in the place of the page shown only
         // when ready: the screen does not go blank in between (in manga, at every page turn).
         const frames = urls.map(() => this.#createFrame())
-        const docs = await Promise.all(frames.map((frame, i) => this.#loadFrame(frame, urls[i])))
-        const superseded = this.#committed !== navigation // by a newer navigation
+        // Frames taken out of the page by destroy() never load: the wait ends with it.
+        const docs = await Promise.race([Promise.all(frames.map((frame, i) => this.#loadFrame(frame, urls[i]))), this.#destroyed])
+        const superseded = this.#committed !== navigation // by a newer navigation, or by destroy()
         for (const frame of superseded ? frames : this.#frames) frame.parentElement!.remove()
-        if (superseded) return
+        if (superseded || !docs) return
         this.#frames = frames
+        this.#emptied = false
         this.#index = indices[0]
         this.#shown = indices
         docs.forEach((doc, i) => this.#setup(doc, indices[i]))
@@ -401,7 +414,8 @@ export class EpubViewer extends EventTarget {
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index, doc } }))
   }
 
-  #followLink(href: string, doc: Document): void {
+  #followLink(link: string, doc: Document): void {
+    const href = link.trim() // as browsers read it: white space around a URL is not part of it
     // Relative to the section that the link is in: of a spread, that may be the second page.
     const from = this.#shown[this.#frames.findIndex((frame) => frame.contentDocument === doc)] ?? this.#index
     const target = resolvePath(href, this.#book!.sections[from].href)
@@ -447,7 +461,8 @@ export class EpubViewer extends EventTarget {
     const { width, height } = this.#stage.getBoundingClientRect()
     // Nothing is shown yet. Or the container is hidden (it has no size): there is nothing to lay
     // out, and the position must not be lost; this is called again when it is shown.
-    if (this.#index < 0 || !width || !height) return
+    // Nor is there after the book has taken the frame elsewhere: the position is kept as well.
+    if (this.#index < 0 || !width || !height || this.#emptied) return
     if (this.#fixed) {
       if (this.#shownWith(this.#index).join() === this.#shown.join()) {
         this.#layout() // scaled anew
@@ -472,7 +487,8 @@ export class EpubViewer extends EventTarget {
   }
 
   #showPage(page: number): void {
-    const shown = Math.min(Math.max(page, 0), this.#pagination.pages - 1)
+    // `|| 0`: a page that is not a number (from a position that is not one) is the first page.
+    const shown = Math.min(Math.max(page || 0, 0), this.#pagination.pages - 1)
     if (!this.#fixed) scrollToPage(this.#frame.contentDocument!, this.#pagination, shown)
     this.#setPage(shown)
   }
