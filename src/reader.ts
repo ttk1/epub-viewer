@@ -1,6 +1,6 @@
 import { openBook, type Book, type BookSource, type TocItem } from './book.ts'
 import { fonts, themes, type Theme, type ViewerOptions } from './options.ts'
-import { EpubViewer, type BookLocation } from './viewer.ts'
+import { EpubViewer, type BookLocation, type BookTarget } from './viewer.ts'
 
 /** Settings the user changes from the toolbar. Saved (see ReaderOptions.storage) and shared by all books. */
 export interface ReaderSettings {
@@ -41,8 +41,8 @@ export interface OpenOptions {
    * Give one when books share an identifier, e.g. per-episode EPUBs of the same novel.
    */
   key?: string
-  /** Where to start (a BookLocation or a TocItem href). Overrides the saved position. */
-  location?: BookLocation | string
+  /** Where to start. Overrides the saved position. */
+  location?: BookTarget
 }
 
 const DEFAULT_SETTINGS: ReaderSettings = {
@@ -278,9 +278,10 @@ export class EpubReader {
 
   async #open(source: BookSource, { key, location }: OpenOptions, isLatest: () => boolean): Promise<Book> {
     const book = await openBook(source)
+    // Not the latest call any more (or the reader has been destroyed): the book of the latest one is given instead.
     if (!isLatest()) {
       book.destroy()
-      return this.#opening!
+      return this.#opening ?? book
     }
     this.#book?.destroy()
     this.#book = book
@@ -290,8 +291,10 @@ export class EpubReader {
     this.#part('title').textContent = book.metadata.title
     this.#root.dataset.layout = book.metadata.layout // for the settings shown
     this.#renderToc(book)
-    await this.viewer.open(book, location ?? this.#load(`position:${this.#positionKey}`))
-    return book
+    // What is saved may not be a position (it is not ours alone to write): such a thing is not used.
+    const saved = this.#load<BookLocation>(`position:${this.#positionKey}`)
+    await this.viewer.open(book, location ?? (typeof saved?.index === 'number' && typeof saved.progress === 'number' ? saved : undefined))
+    return isLatest() ? book : (this.#opening ?? book)
   }
 
   /** Removes the reader from `root` and releases the book. */
@@ -299,6 +302,7 @@ export class EpubReader {
     this.#root.ownerDocument.removeEventListener('click', this.#dismiss)
     this.#systemDark.removeEventListener('change', this.#apply)
     this.#menuObserver.disconnect()
+    this.#opening = undefined // a book that is still being opened is not shown
     this.viewer.destroy()
     this.#book?.destroy()
     this.#root.replaceChildren()
@@ -314,7 +318,7 @@ export class EpubReader {
   #apply = (): void => {
     const settings = this.#settings
     const name = settings.theme === 'system' ? (this.#systemDark.matches ? 'dark' : 'light') : settings.theme
-    const theme = themes[name]
+    const theme = themes[name] ?? themes.light // a saved setting may be a name that is not known (any more)
     const { style } = this.#root
     style.setProperty('--bg', theme.background)
     style.setProperty('--fg', theme.color)
@@ -336,7 +340,8 @@ export class EpubReader {
   }
 
   #onClick = (e: MouseEvent): void => {
-    const control = (e.target as Element).closest<HTMLElement>('button, summary, input')
+    // The controls of the reader, and buttons added by the app; not other things that it adds (e.g. a text field).
+    const control = (e.target as Element).closest<HTMLElement>('button, summary, .settings input')
     if (control?.matches('.font-up, .font-down')) {
       const ratio = control.matches('.font-up') ? 1.2 : 1 / 1.2 // equal-looking steps at any size
       this.setSettings({ fontSize: Math.min(120, Math.max(12, Math.round(this.#settings.fontSize * ratio))) })
@@ -433,7 +438,7 @@ export class EpubReader {
       // Of several entries for one section, the last one that is for the whole section: where a
       // chapter is followed by its episodes, the chapter links to the first episode. Entries for a
       // place inside the section (#...) are not taken: where in the section the page is is not known.
-      if (i <= index && (i > best || (i === best && !button.value.includes('#')))) [current, best] = [button, i]
+      if (i >= 0 && i <= index && (i > best || (i === best && !button.value.includes('#')))) [current, best] = [button, i]
     }
     current?.setAttribute('aria-current', 'true')
   }

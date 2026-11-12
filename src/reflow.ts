@@ -61,6 +61,7 @@ export function paginate(
       column-gap: ${2 * m}px !important;
       column-fill: auto !important;
       overflow: hidden !important;
+      scroll-behavior: auto !important; /* page turns are jumps; a smooth one would be read as many */
       /* Quick taps on the side of the page turn pages; they must not zoom in as double taps.
          Panning and pinch zoom stay as they are. */
       touch-action: manipulation !important;

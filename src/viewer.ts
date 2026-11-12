@@ -8,17 +8,25 @@ import { firstText, pageOf, paginate, scrolledPage, scrollToPage, type Paginatio
 export interface BookLocation {
   /** Index into `book.sections`. Negative counts from the end, as in `Array.at()` (-1 = last section). */
   index: number
-  /** Position within the section, 0 (first page) to 1 (last page). */
+  /**
+   * Position within the section: the share of it that comes before the page. 0 is the first page;
+   * the last page of n is (n - 1) / n when read, and 1 is also taken for it when given.
+   */
   progress: number
 }
+
+/** Where to go: a BookLocation, a TocItem href, or a position in the whole book (the `fraction` of the relocate event, 0 to 1). */
+export type BookTarget = BookLocation | string | { fraction: number }
 
 export interface RelocateDetail extends BookLocation {
   /** 0-based page number within the section. */
   page: number
   /** Number of pages in the section. A page of a fixed-layout book is a section of its own, of one page. */
   pages: number
-  /** Estimated progress through the whole book, (0, 1]; 1 on the last page. `goTo({ fraction })` leads back here. */
+  /** Estimated progress through the whole book, up to the end of the page: 1 on the last page. `goTo({ fraction })` leads back here. */
   fraction: number
+  /** Pages progress to the left (vertical text, manga): goLeft() is next(). For the direction of a slider or of buttons. */
+  rtl: boolean
   /** The sections on the screen: one, or the two pages of a spread of a fixed-layout book (`index` is the first). */
   indices: number[]
 }
@@ -97,10 +105,10 @@ export class EpubViewer extends EventTarget {
   #anchor?: Range
 
   // Navigations (see #display) overlap, as they wait for files to load.
-  /** Incremented when a navigation begins to change the page: an older one that is still loading gives up. */
-  #token = 0
-  /** Incremented when a navigation starts, to tell whether it is the latest one when it ends. */
+  /** The number of the navigation started last. */
   #navigation = 0
+  /** The number of the navigation that changed the page last, or is doing so: those started before it give up. */
+  #committed = 0
   /** The latest navigation is under way: page turns by the user are ignored meanwhile. */
   #busy = false
 
@@ -122,7 +130,7 @@ export class EpubViewer extends EventTarget {
       goRight: () => this.goRight(),
       shown: () => this.#index >= 0,
       pagesRect: () => this.#pagesRect(),
-      followLink: (href) => this.#followLink(href),
+      followLink: (href, doc) => this.#followLink(href, doc),
       dispatchEvent: (event) => this.dispatchEvent(event),
     })
     this.setOptions(options)
@@ -143,22 +151,21 @@ export class EpubViewer extends EventTarget {
     return this.#index < 0 ? undefined : { index: this.#index, progress: this.#page / this.#pagination.pages }
   }
 
-  /** Shows `book` at `location` (a BookLocation or a TocItem href), or at the beginning. */
-  async open(book: Book, location?: BookLocation | string): Promise<void> {
+  /** Shows `book` at `target`, or at the beginning. The Book shown before is not destroyed. */
+  async open(book: Book, target?: BookTarget): Promise<void> {
     this.#book = book
     this.#index = -1
     this.#shown = []
+    this.#committed = ++this.#navigation // navigations of the book before give up
     const start = { index: Math.max(0, book.sections.findIndex((s) => s.linear)), progress: 0 }
-    await this.goTo(location ?? start)
-    // A location that is not in this book, e.g. one saved for an older edition: don't leave the page empty.
-    if (this.#index < 0) await this.goTo(start)
+    await this.goTo(target ?? start)
+    // A target that is not in this book, e.g. one saved for an older edition: don't leave the page
+    // empty. (Unless another book has been opened meanwhile: that one is not ours to move.)
+    if (this.#book === book && this.#index < 0) await this.goTo(start)
   }
 
-  /**
-   * Moves to a BookLocation, to a TocItem href, or to a position in the whole book: `fraction` is
-   * the one of the relocate event (0 to 1), so that a slider can show the one and set the other.
-   */
-  async goTo(target: BookLocation | string | { fraction: number }): Promise<void> {
+  /** Moves to `target`. Does nothing if that is not in the book. */
+  async goTo(target: BookTarget): Promise<void> {
     if (typeof target === 'string') {
       const [path, fragment] = target.split('#')
       const index = this.#book?.sections.findIndex((s) => s.href === path) ?? -1
@@ -196,7 +203,7 @@ export class EpubViewer extends EventTarget {
 
   destroy(): void {
     // Stops navigations under way, and makes later calls (setOptions, next, ...) do nothing.
-    this.#token++
+    this.#committed = ++this.#navigation
     this.#book = undefined
     this.#index = -1
     this.#resizeObserver.disconnect()
@@ -276,14 +283,21 @@ export class EpubViewer extends EventTarget {
 
   #loadFrame(iframe: HTMLIFrameElement, url: string): Promise<Document> {
     return new Promise((resolve) => {
-      const onLoad = async () => {
+      let loaded = false
+      iframe.addEventListener('load', async () => {
         const doc = iframe.contentDocument
-        if (!doc || doc.URL === 'about:blank') return
-        iframe.removeEventListener('load', onLoad)
-        await doc.fonts.ready
-        resolve(doc)
-      }
-      iframe.addEventListener('load', onLoad)
+        if (loaded) {
+          // A frame is loaded once. If it loads again, the book has taken it to another page by a
+          // way that is not known (the known ones are closed in book.ts and input.ts): that page is not shown.
+          if (doc?.URL === 'about:blank') return
+          iframe.src = 'about:blank'
+          this.dispatchEvent(new CustomEvent('error', { detail: { error: new Error('The book tried to leave its page') } }))
+        } else if (doc && doc.URL !== 'about:blank') {
+          loaded = true
+          await doc.fonts.ready
+          resolve(doc)
+        }
+      })
       iframe.src = url
     })
   }
@@ -309,11 +323,14 @@ export class EpubViewer extends EventTarget {
   async #seek(fraction: number): Promise<void> {
     const sizes = (this.#book?.sections ?? []).map((section) => section.size)
     const part = Math.min(Math.max(fraction, 0), 1)
-    if (this.#fixed) return this.#display(Math.max(0, Math.ceil(part * sizes.length) - 1), {})
+    // A page ends at (page + 1) / pages; the small amounts make up for rounding errors, which
+    // would lead to the page after the one that reported the fraction.
+    if (this.#fixed) return this.#display(Math.max(0, Math.ceil(part * sizes.length - 1e-6) - 1), {})
     // The section that this much of the book (in bytes) ends in, and how far into it.
-    let rest = part * sizes.reduce((a, b) => a + b, 0)
+    const total = sizes.reduce((a, b) => a + b, 0)
+    let rest = part * total
     let index = 0
-    while (index < sizes.length - 1 && rest > sizes[index]) rest -= sizes[index++]
+    while (index < sizes.length - 1 && rest > sizes[index] + total * 1e-9) rest -= sizes[index++]
     await this.#display(index, { reach: sizes[index] ? rest / sizes[index] : 0 })
   }
 
@@ -331,15 +348,18 @@ export class EpubViewer extends EventTarget {
       // navigation that is under way, stays as it is.
       const indices = this.#shownWith(index)
       const shown = indices.join() === this.#shown.join()
-      const urls = shown ? [] : await Promise.all(indices.map((i) => book.getUrl(book.sections[i].href)))
-      if (book !== this.#book) return // another book was opened, or the viewer destroyed, meanwhile
-      const token = ++this.#token
+      const urls = shown ? [] : await Promise.all(indices.map((i) => book.getUrl(book.sections[i].href))).catch((error) => error as Error)
+      // A navigation started after this one has changed the page already (or another book was
+      // opened, or the viewer destroyed): the one asked for last wins, not the one ready last.
+      if (navigation < this.#committed) return
+      if (urls instanceof Error) throw urls
+      this.#committed = navigation
       if (!shown) {
         // Loaded in frames of their own, out of sight, and put in the place of the page shown only
         // when ready: the screen does not go blank in between (in manga, at every page turn).
         const frames = urls.map(() => this.#createFrame())
         const docs = await Promise.all(frames.map((frame, i) => this.#loadFrame(frame, urls[i])))
-        const superseded = token !== this.#token // by a newer navigation
+        const superseded = this.#committed !== navigation // by a newer navigation
         for (const frame of superseded ? frames : this.#frames) frame.parentElement!.remove()
         if (superseded) return
         this.#frames = frames
@@ -348,7 +368,7 @@ export class EpubViewer extends EventTarget {
         docs.forEach((doc, i) => this.#setup(doc, indices[i]))
       }
       this.#layout()
-      const target = fragment && this.#frame.contentDocument!.getElementById(fragment)
+      const target = !this.#fixed && fragment ? this.#frame.contentDocument!.getElementById(fragment) : null
       const { pages } = this.#pagination
       // A page ends at (page + 1) / pages of the section; the small amount is for rounding errors.
       const page = reach === undefined ? Math.round(progress * pages) : Math.ceil(reach * pages - 1e-6) - 1
@@ -380,8 +400,10 @@ export class EpubViewer extends EventTarget {
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index, doc } }))
   }
 
-  #followLink(href: string): void {
-    const target = resolvePath(href, this.#book!.sections[this.#index].href)
+  #followLink(href: string, doc: Document): void {
+    // Relative to the section that the link is in: of a spread, that may be the second page.
+    const from = this.#shown[this.#frames.findIndex((frame) => frame.contentDocument === doc)] ?? this.#index
+    const target = resolvePath(href, this.#book!.sections[from].href)
     if (target) {
       this.goTo(target).catch((error: unknown) => this.dispatchEvent(new CustomEvent('error', { detail: { error } })))
     } else if (
@@ -421,16 +443,26 @@ export class EpubViewer extends EventTarget {
 
   /** The container or the options have changed. */
   #relayout(): void {
-    if (this.#index < 0) return // nothing is shown yet
+    const { width, height } = this.#stage.getBoundingClientRect()
+    // Nothing is shown yet. Or the container is hidden (it has no size): there is nothing to lay
+    // out, and the position must not be lost; this is called again when it is shown.
+    if (this.#index < 0 || !width || !height) return
     if (this.#fixed) {
-      // The same page again: scaled anew, and with or without its neighbor if the room for a spread has changed.
-      this.#display(this.#index, {}).catch((error: unknown) => this.dispatchEvent(new CustomEvent('error', { detail: { error } })))
+      if (this.#shownWith(this.#index).join() === this.#shown.join()) {
+        this.#layout() // scaled anew
+        this.#setPage(0)
+      } else {
+        // The room for a spread has changed: the same page again, with or without its neighbor.
+        this.#display(this.#index, {}).catch((error: unknown) => this.dispatchEvent(new CustomEvent('error', { detail: { error } })))
+      }
       return
     }
     // The text at the start of the page is found again after the layout: the same share of the
     // section would be a different place. Kept through a series of re-layouts (font size up, up,
     // down, ...), so that they don't drift.
     const doc = this.#frame.contentDocument!
+    // Back to the page first: while the container was hidden, the browser may have scrolled the document to its start.
+    scrollToPage(doc, this.#pagination, this.#page)
     const anchor = this.#anchor ?? firstText(doc, this.#pagination)
     const progress = this.#page / this.#pagination.pages
     this.#layout()
@@ -451,7 +483,8 @@ export class EpubViewer extends EventTarget {
    */
   #onScroll = (e: Event): void => {
     const doc = e.currentTarget as Document
-    if (this.#index < 0 || doc !== this.#frame.contentDocument) return
+    // Not while the container is hidden: the browser then scrolls the document to its start, which is not a move.
+    if (this.#index < 0 || doc !== this.#frame.contentDocument || !this.#stage.offsetWidth) return
     const page = scrolledPage(doc, this.#pagination)
     if (page !== this.#page && page < this.#pagination.pages) this.#setPage(page)
   }
@@ -467,7 +500,7 @@ export class EpubViewer extends EventTarget {
     const fraction = this.#fixed
       ? (this.#shown[this.#shown.length - 1] + 1) / sizes.length
       : (before + (sizes[this.#index] * (page + 1)) / pages) / total
-    const detail: RelocateDetail = { ...this.location!, page, pages, fraction, indices: [...this.#shown] }
+    const detail: RelocateDetail = { ...this.location!, page, pages, fraction, rtl: this.#rtl, indices: [...this.#shown] }
     this.dispatchEvent(new CustomEvent('relocate', { detail }))
   }
 }
