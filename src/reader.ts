@@ -15,6 +15,8 @@ export interface ReaderSettings {
   writingMode: ViewerOptions['writingMode']
   /** Two pages (fixed layout) or two columns (horizontal text) side by side. */
   spread: ViewerOptions['spread']
+  /** Fixed layout: the side that pages progress towards. */
+  direction: ViewerOptions['direction']
 }
 
 export interface ReaderOptions {
@@ -44,6 +46,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   maxWidth: 0,
   writingMode: 'auto',
   spread: 'auto',
+  direction: 'auto',
 }
 
 /** A row of the settings panel: radio buttons named after the setting, one per value. */
@@ -57,7 +60,8 @@ const choices = (name: keyof ReaderSettings, label: string, options: [value: str
 const swatch = ({ background, color }: Theme) => `background:${background};color:${color}`
 
 // The two menus are <details>, so they open and close without any code. The settings are in a
-// <form> to keep the radio button groups of several readers on one page apart.
+// <form> to keep the radio button groups of several readers on one page apart. Settings that only
+// work for one kind of book (reflowable text, or fixed-layout pages) are shown for that kind only.
 const TOOLBAR = `
   <details class="toc" hidden>
     <summary>目次</summary>
@@ -68,19 +72,24 @@ const TOOLBAR = `
   <details class="settings">
     <summary title="表示設定" aria-label="表示設定">Aa</summary>
     <form class="panel">
-      <div class="row">
-        <span>文字サイズ</span>
-        <span class="choices">
-          <button type="button" class="font-down" title="文字を小さく">A−</button>
-          <output class="font-size"></output>
-          <button type="button" class="font-up" title="文字を大きく">A＋</button>
-        </span>
+      <div class="only-reflowable">
+        <div class="row">
+          <span>文字サイズ</span>
+          <span class="choices">
+            <button type="button" class="font-down" title="文字を小さく">A−</button>
+            <output class="font-size"></output>
+            <button type="button" class="font-up" title="文字を大きく">A＋</button>
+          </span>
+        </div>
+        ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
+        ${choices('lineHeight', '行間', [[0, '本の指定'], [1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
+        ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
+        ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       </div>
-      ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
-      ${choices('lineHeight', '行間', [[0, '本の指定'], [1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
-      ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
-      ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       ${choices('spread', '見開き', [['auto', '自動'], ['always', 'する'], ['never', 'しない']])}
+      <div class="only-pre-paginated">
+        ${choices('direction', '開き方向', [['auto', '本の指定'], ['rtl', '右開き'], ['ltr', '左開き']])}
+      </div>
       ${choices('theme', 'テーマ', [
         ['system', '自動'],
         ['light', 'ライト', swatch(themes.light)],
@@ -145,6 +154,10 @@ const STYLE = `
     display: block; width: 100%; padding-left: calc(10px + var(--depth) * 1em); text-align: start; white-space: normal;
   }
   .epub-reader .toc-list [aria-current] { background: var(--hover); font-weight: 600; }
+  /* The groups of rows for one kind of book do not make a box of their own. */
+  .epub-reader :is(.only-reflowable, .only-pre-paginated) { display: contents; }
+  .epub-reader[data-layout='pre-paginated'] .only-reflowable,
+  .epub-reader[data-layout='reflowable'] .only-pre-paginated { display: none; }
   .epub-reader .row { display: grid; grid-template-columns: 5.5em 1fr; align-items: center; }
   .epub-reader .row > :first-child { opacity: 0.7; }
   .epub-reader .choices { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
@@ -259,6 +272,7 @@ export class EpubReader {
     const name = typeof source === 'string' || source instanceof URL ? String(source) : (source as Partial<File>).name
     this.#positionKey = key ?? (book.metadata.identifier || name || book.metadata.title)
     this.#part('title').textContent = book.metadata.title
+    this.#root.dataset.layout = book.metadata.layout // for the settings shown
     this.#renderToc(book)
     await this.viewer.open(book, location ?? this.#load(`position:${this.#positionKey}`))
     return book
@@ -274,6 +288,7 @@ export class EpubReader {
     this.#root.replaceChildren()
     this.#root.classList.remove('epub-reader', 'menu-open')
     for (const property of ['--bg', '--fg', '--progress', 'color-scheme']) this.#root.style.removeProperty(property)
+    delete this.#root.dataset.layout
   }
 
   #part<T extends HTMLElement = HTMLElement>(name: string): T {
@@ -300,6 +315,7 @@ export class EpubReader {
       maxWidth: settings.maxWidth,
       writingMode: settings.writingMode,
       spread: settings.spread,
+      direction: settings.direction,
     })
   }
 
