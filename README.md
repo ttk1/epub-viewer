@@ -8,7 +8,7 @@
 - **ダークモード・セピア**などのテーマ、明朝 / ゴシックの切り替え、文字サイズ・行間・表示幅の変更、目次、読書位置の保存と再開
 - **組み込みやすさ**: フレームワーク非依存。ツールバー付きの画面ごと（`EpubReader`）でも、表示部分だけ（`EpubViewer`）でも組み込めます。イベントと位置情報（Location）で、次の話への自動遷移や本棚アプリからの再開などを実装できます
 - **ランタイム依存ゼロ**: ZIP の展開もブラウザ標準の `DecompressionStream` で行います
-- [nepub](https://github.com/ttk1/nepub) で作った EPUB を主な対象としていますが、一般的な EPUB 2 / 3（リフロー型）も読めます
+- **EPUB 2 / 3** のリフロー型（小説など）と固定レイアウト（漫画など）に対応します
 
 ## アプリを使う
 
@@ -32,7 +32,7 @@ docker compose up
 | Aa | 表示設定（以下の 7 項目）を開く |
 | 文字サイズ（A− / A＋） | 既定 45px、1 段階ごとに 1.2 倍 |
 | 表示幅（全幅〜600） | ページを画面中央の指定幅（px）に収める（左右の余白をクリックしてもページをめくれる） |
-| 行間（狭い / 標準 / 広い / とても広い） | 既定は標準。本の CSS が行間を指定している箇所はそちらが優先される |
+| 行間（本の指定 / 狭い / 標準 / 広い / とても広い） | 既定は「本の指定」（本が行間を指定していなければ標準と同じ）。それ以外を選ぶと本の指定より優先する |
 | 表示方向（自動 / 縦書き / 横書き） | 自動は本の指定に従う |
 | 見開き（自動 / する / しない） | 固定レイアウトの本は 2 ページ並べ、横書きの本は 2 段組みにする。自動は画面に余裕があるとき（横長の画面、または 2 段組みにしても 1 段が狭くならない幅）だけ |
 | テーマ（自動 / ライト / セピア / ダーク） | 既定の「自動」は OS のダークモード設定に合わせる |
@@ -46,7 +46,7 @@ docker compose up
 
 固定レイアウトの本（漫画など）では、文字サイズ・フォント・行間・表示幅・表示方向の設定は働きません（ページの見た目が本の側で決まっているため）。ページ数の表示は本全体での「現在のページ / 総ページ数」になります。
 
-読書位置と各設定（文字サイズ・フォント・行間・表示幅・表示方向・見開き・テーマ）はブラウザ（localStorage）に保存され、次に同じ本を開くと続きから表示されます。読書位置は本の識別子（`dc:identifier`）ごと、識別子がない本（nepub 製など）は URL やファイル名ごとに保存されます。
+読書位置と各設定（文字サイズ・フォント・行間・表示幅・表示方向・見開き・テーマ）はブラウザ（localStorage）に保存され、次に同じ本を開くと続きから表示されます。読書位置は本の識別子（`dc:identifier`）ごと、識別子がない本は URL やファイル名ごとに保存されます。
 
 ## ライブラリとして組み込む
 
@@ -201,7 +201,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 
 | メンバー | 説明 |
 | --- | --- |
-| `metadata` | `{ identifier, title, creator, language, layout, direction }`。nepub 製 EPUB は `identifier` が空。`layout` は `'reflowable'` か `'pre-paginated'`（固定レイアウト）、`direction` はページの進む向き（`'rtl'` = 右開き / `'ltr'`） |
+| `metadata` | `{ identifier, title, creator, language, layout, direction }`。`identifier` は本によっては空。`layout` は `'reflowable'` か `'pre-paginated'`（固定レイアウト）、`direction` はページの進む向き（`'rtl'` = 右開き / `'ltr'`） |
 | `sections` | 読む順のセクション一覧 `{ href, linear, size, spread? }[]`。`linear: false` はページ送りで飛ばされる。固定レイアウトでは 1 セクションが 1 ページで、`spread` は見開きでの位置（`'left'` / `'right'` / `'center'`、本に指定があるときだけ） |
 | `toc` | 目次 `{ label, href, children }[]`（EPUB 3 の nav、なければ EPUB 2 の NCX） |
 | `loadCover()` | 表紙画像の `Blob`（なければ `undefined`）。本棚のサムネイルなどに |
@@ -215,7 +215,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | オプション | 既定値 | 説明 |
 | --- | --- | --- |
 | `storageKey` | `'epub-viewer'` | localStorage のキーの接頭辞。設定は `<storageKey>:settings`、読書位置は `<storageKey>:position:<キー>` に保存される。`''` で保存しない |
-| `settings` | – | 初期設定 `{ theme, font, fontSize, lineHeight, maxWidth, writingMode, spread }`。`theme` は `'system'` / `'light'` / `'sepia'` / `'dark'`、`font` は `'mincho'` / `'gothic'` / `'book'`、それ以外は `EpubViewer` の同名のオプションと同じ。既定は OS に合わせたテーマ・明朝・45px・行間 1.6・全幅・表示方向と見開きは自動。保存されるのはユーザーが変えた項目だけで、それ以外はここで指定した値が使われ続ける |
+| `settings` | – | 初期設定 `{ theme, font, fontSize, lineHeight, maxWidth, writingMode, spread }`。`theme` は `'system'` / `'light'` / `'sepia'` / `'dark'`、`font` は `'mincho'` / `'gothic'` / `'book'`、それ以外は `EpubViewer` の同名のオプションと同じ。既定は OS に合わせたテーマ・明朝・45px・行間は本の指定・全幅・表示方向と見開きは自動。保存されるのはユーザーが変えた項目だけで、それ以外はここで指定した値が使われ続ける |
 | `viewer` | – | 内部の `EpubViewer` に渡すオプション（`keyboard`・`wheel`・`swipe`・`cooldown` など）。見た目のオプションは設定から決まる |
 
 | メソッド・プロパティ | 説明 |
@@ -235,7 +235,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | `theme` | `themes.light` | `{ background, color, link }`。`themes.light` / `themes.dark` / `themes.sepia` または独自の色 |
 | `fontFamily` | `''` | 本のフォントを上書きする CSS の font-family。`fonts.mincho`（明朝）/ `fonts.gothic`（ゴシック）は各 OS の和文フォントをまとめた指定。`''` は本の指定のまま |
 | `fontSize` | `16` | 基準の文字サイズ（px）。本が em や % で指定した文字サイズはこれに比例する |
-| `lineHeight` | `1.6` | 行間（文字サイズに対する倍率）。本の CSS が行間を指定している箇所はそちらが優先される |
+| `lineHeight` | `0` | 本文の行間（文字サイズに対する倍率）。本の指定より優先する。`0` は本の指定のまま（指定がなければ 1.6） |
 | `writingMode` | `'auto'` | `'auto'`（本の指定に従う）/ `'vertical'` / `'horizontal'` |
 | `margin` | `32` | ページ余白（px） |
 | `maxWidth` | `0` | ページの最大幅（px）。コンテナの中央に表示し、左右の余白はテーマの背景色になる（余白のクリックでもページをめくれる）。`0` は全幅 |
