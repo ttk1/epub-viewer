@@ -133,6 +133,8 @@ export class Book {
   #destroyed = false
   /** For each file being rewritten, the files that it refers to: their URLs go into its own. */
   readonly #references = new Map<string, Set<string>>()
+  /** For each file being rewritten, the length of the data: URLs put into it so far. */
+  readonly #dataUrlSizes = new Map<string, number>()
 
   /** Use `openBook()` instead of calling this directly. */
   constructor(
@@ -250,8 +252,10 @@ export class Book {
     const html = `<!DOCTYPE html>${doc.documentElement.outerHTML}`
     // HTML does not always read back as it was written: text or a comment can come back as an
     // element (e.g. a <meta> that takes the page elsewhere). Nothing is shown of a document in
-    // which something that protect() removed is there again.
-    const safe = unwanted(parse(type, html)).length === 0
+    // which something that protect() removed is there again. Nor of one that does not begin with
+    // the CSP, which is all that stops its scripts: looked for in the text itself, as the browser
+    // will read it, and not in a document, whose properties a book can replace (see NAMED).
+    const safe = BEGINS_WITH_CSP.test(html) && unwanted(parse(type, html)).length === 0
     return textBlob(safe ? html : `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">`, type)
   }
 
@@ -271,7 +275,7 @@ export class Book {
       [...css.matchAll(pattern)].map((m) => this.#resolveUrl((m[2] ?? m[3] ?? m[5]).trim(), path)),
     )
     let i = 0
-    return css.replace(pattern, (match) => (match.startsWith('@') ? `@import "${urls[i++]}"` : `url("${urls[i++]}")`))
+    return css.replace(pattern, (match) => (match.startsWith('@') ? `@import ${cssString(urls[i++])}` : `url(${cssString(urls[i++])})`))
   }
 
   /** Converts a reference found in the file at `base` into a blob: URL (external URLs are kept as-is). */
@@ -281,12 +285,24 @@ export class Book {
     // through other files, e.g. stylesheets that import each other: the URL of this file would have
     // to be known before it can be made, and waiting for it would never end.
     if (!path || !this.#zip.has(path) || this.#refersTo(path, base)) return href
+    // Nor a document (e.g. <img src="chapter2.xhtml">): it is not shown there (the CSP closes
+    // frames), and documents that refer to each other in a chain were all rewritten for the first.
+    if (this.#documents.has(path) || HTML_TYPES.includes(this.#types.get(path) ?? '')) return href
     let references = this.#references.get(base)
     if (!references) this.#references.set(base, (references = new Set()))
     references.add(path)
     // A file that cannot be read is left out (e.g. an image shows as broken); the rest is still shown.
     const url = await this.getUrl(path).catch(() => undefined)
-    return url ? url + (fragment ? `#${fragment}` : '') : href
+    if (!url) return href
+    // A data: URL is the whole file, again for every reference to it: a book of a few kilobytes
+    // that refers to an SVG a thousand times made a document of hundreds of megabytes. Past a
+    // size, such references are left out as well.
+    if (url.startsWith('data:')) {
+      const size = (this.#dataUrlSizes.get(base) ?? 0) + url.length
+      if (size > MAX_DATA_URLS) return href
+      this.#dataUrlSizes.set(base, size)
+    }
+    return url + (fragment ? `#${fragment}` : '')
   }
 
   /** Whether `from` is `target`, or refers to it through the references found so far. */
@@ -324,6 +340,22 @@ function parseXml(source: string): Document {
  * scripts must never run, it must not take the frame elsewhere, and it must not reach other servers.
  */
 function protect(doc: Document): void {
+  // First of all, and without the properties of the document, which may be elements until then (see NAMED).
+  for (const [selector, attribute] of [
+    [NAMED_BY_NAME, 'name'],
+    ['object', 'id'],
+    // Takes the focus from the host page, and scrolls it, whenever the section is shown (WebKit).
+    ['[autofocus]', 'autofocus'],
+    // Keys in the page would edit it instead of turning the page.
+    ['[contenteditable]', 'contenteditable'],
+  ]) {
+    for (const el of Document.prototype.querySelectorAll.call(doc, selector)) Element.prototype.removeAttribute.call(el, attribute)
+  }
+  // A CSP of the book's own would apply as well as ours: one without 'unsafe-inline' for styles
+  // stops those of the viewer, and the text is not split into pages.
+  for (const el of doc.querySelectorAll('meta[http-equiv]')) {
+    if (el.getAttribute('http-equiv')!.trim().toLowerCase() === 'content-security-policy') el.remove()
+  }
   const meta = (name: string, content: string) => {
     const el = doc.createElementNS(XHTML, 'meta')
     el.setAttribute('http-equiv', name)
@@ -370,7 +402,26 @@ const unwanted = (doc: Document): Element[] => [
   // server for the browser to connect to ahead of time (rel="preconnect"), which the CSP does not
   // stop in WebKit.
   ...[...doc.querySelectorAll('link')].filter((link) => !isStylesheet(link)),
+  // Named after a property of the document (see NAMED): protect() takes their names off.
+  ...doc.querySelectorAll(NAMED),
 ]
+/**
+ * In an HTML document (and in Firefox, also in XHTML), these elements are properties of the
+ * document by their names, over those of the document itself: with <img name="documentElement">,
+ * `doc.documentElement` is the image. The rewriting here, and the viewer, rely on those properties.
+ */
+const NAMED_BY_NAME = 'embed, form, iframe, img, object'
+const NAMED = 'embed[name], form[name], iframe[name], img[name], object[name], object[id]'
+/** The most of data: URLs (in characters) that one file is given: far more than books have (e.g. an SVG icon of 50 KB, 200 times: 14 MB). */
+const MAX_DATA_URLS = 32 * 2 ** 20
+/**
+ * `text` as a CSS string. What would end the string, or the <style> element that it is in, is
+ * escaped: a URL can hold anything, as its fragment is decoded ("#%3C/style%3E"), and so can the
+ * media type of a data: URL.
+ */
+const cssString = (text: string) => `"${text.replace(/["\\<\n\r\f]/g, (c) => `\\${c.charCodeAt(0).toString(16)} `)}"`
+/** An HTML document as it is written out by #rewriteHtml: <html> (with attributes), <head>, and the CSP first in it. */
+const BEGINS_WITH_CSP = /^<!DOCTYPE html><html(?: [^\s"=>]+="[^"]*")*><head><meta http-equiv="Content-Security-Policy" /
 /** The elements that have no end tag in HTML. */
 const VOID_ELEMENTS = /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i
 /** Types of files that cannot hold scripts, whatever is in them: bitmap images, fonts, audio and video. */

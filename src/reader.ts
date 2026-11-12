@@ -460,22 +460,23 @@ export class EpubReader {
 
   #renderToc(book: Book): void {
     const sectionIndex = new Map(book.sections.map((section, index) => [section.href, index]))
-    const buttons: HTMLButtonElement[] = []
+    // Not a list of arguments (replaceChildren(...buttons)): their number has a limit, which a book can go past.
+    const buttons = this.#root.ownerDocument.createDocumentFragment()
     const add = (items: TocItem[], depth: number) => {
       for (const item of items) {
         const button = this.#root.ownerDocument.createElement('button')
         Object.assign(button, { type: 'button', textContent: item.label, value: item.href, disabled: !item.href })
         button.style.setProperty('--depth', String(depth))
         button.dataset.index = String(sectionIndex.get(item.href.split('#')[0]) ?? -1)
-        buttons.push(button)
+        buttons.append(button)
         add(item.children, depth + 1)
       }
     }
     add(book.toc, 0)
-    this.#part('toc-list').replaceChildren(...buttons)
-    this.#marked = -1
     // A single entry leads nowhere but to the section already shown (e.g. a book of one episode).
-    this.#part('toc').hidden = buttons.length < 2
+    this.#part('toc').hidden = buttons.childElementCount < 2
+    this.#part('toc-list').replaceChildren(buttons)
+    this.#marked = -1
   }
 
   /** Marks the table of contents entry that the section at `index` belongs to: the last one at or before it. */

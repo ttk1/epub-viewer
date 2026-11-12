@@ -36,6 +36,12 @@ const SWIPE_SLOPE = 1.5
  * Also <use>, likewise without an href: a click on a link that it draws is a click on the <use>.
  */
 const LINKS = 'a, area, use, [*|href]'
+/**
+ * The link that was clicked on, if any. Not by `target.closest()`: a <form> has its controls as
+ * properties by their names, over its own (<input name="closest">), and an error there would let
+ * the browser follow the link.
+ */
+const linkAt = (target: EventTarget | null): Element | null => Element.prototype.closest.call(target, LINKS)
 
 type Listen = 'addEventListener' | 'removeEventListener'
 
@@ -151,7 +157,7 @@ export class Input {
     if (!this.#host.shown()) return e.preventDefault()
     const doc = (e.target as Element).ownerDocument
     // The default is always prevented: the frame must not go anywhere by itself.
-    const link = (e.target as Element).closest?.(LINKS)
+    const link = linkAt(e.target)
     if (link) e.preventDefault()
     // Only <a> and <area> are links to follow. Other elements have an href for what they show
     // (<image> and <use> in SVG: a page is often one <image>), and are clicked like the rest of the page.
@@ -169,7 +175,7 @@ export class Input {
    * the viewer (and the app, by the link event) having a say in it.
    */
   #onAuxClick = (e: MouseEvent): void => {
-    if ((e.target as Element).closest?.(LINKS)) e.preventDefault()
+    if (linkAt(e.target)) e.preventDefault()
   }
 
   /** Clicks on the empty room around the page(s) count as clicks on the edge of the page next to them. */

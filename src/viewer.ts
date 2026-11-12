@@ -320,18 +320,26 @@ export class EpubViewer extends EventTarget {
 
   #loadFrame(iframe: HTMLIFrameElement, url: string): Promise<Document> {
     return new Promise((resolve) => {
-      let loaded = false
+      let [loaded, left] = [false, false]
+      const leave = () => {
+        if (left) return
+        left = true
+        iframe.src = 'about:blank'
+        if (this.#frames.includes(iframe)) this.#emptied = true
+        this.dispatchEvent(new CustomEvent('error', { detail: { error: new Error('The book tried to leave its page') } }))
+      }
       iframe.addEventListener('load', async () => {
         const doc = iframe.contentDocument
         if (loaded) {
           // A frame is loaded once. If it loads again, the book has taken it to another page by a
           // way that is not known (the known ones are closed in book.ts and input.ts): that page is not shown.
-          if (doc?.URL === 'about:blank') return
-          iframe.src = 'about:blank'
-          if (this.#frames.includes(iframe)) this.#emptied = true
-          this.dispatchEvent(new CustomEvent('error', { detail: { error: new Error('The book tried to leave its page') } }))
+          if (doc?.URL !== 'about:blank') leave()
         } else if (doc && doc.URL !== 'about:blank') {
           loaded = true
+          // Also when that page does not finish loading (and so does not fire "load"): the document
+          // of the book is left as soon as the other one comes. (Not when the frame is taken out of the
+          // page, nor when the host page goes into the back/forward cache.)
+          doc.defaultView!.addEventListener('pagehide', (e) => e.persisted || setTimeout(() => iframe.isConnected && leave()))
           await doc.fonts.ready
           resolve(doc)
         }
@@ -463,12 +471,18 @@ export class EpubViewer extends EventTarget {
     const target = resolvePath(href, this.#book!.sections[from].href)
     if (target) {
       this.goTo(target).catch((error: unknown) => this.dispatchEvent(new CustomEvent('error', { detail: { error } })))
-    } else if (
-      // Only web and mail links: a javascript: URL would run with the host page's origin.
-      /^(https?|mailto):/i.test(href) &&
-      this.dispatchEvent(new CustomEvent('link', { detail: { href }, cancelable: true }))
-    ) {
-      this.#container.ownerDocument.defaultView!.open(href, '_blank', 'noopener')
+      return
+    }
+    // As the browser reads it ("http:\\host", "HTTP://", line breaks inside): what the app is given
+    // to check is where the link leads. A URL that is not one leads nowhere.
+    // (Not URL.canParse(), which Safari 16.4 does not have.)
+    let url: URL | undefined
+    try {
+      url = new URL(href)
+    } catch {}
+    // Only web and mail links: a javascript: URL would run with the host page's origin.
+    if (url && ['http:', 'https:', 'mailto:'].includes(url.protocol) && this.dispatchEvent(new CustomEvent('link', { detail: { href: url.href }, cancelable: true }))) {
+      this.#container.ownerDocument.defaultView!.open(url.href, '_blank', 'noopener')
     }
   }
 
@@ -552,7 +566,8 @@ export class EpubViewer extends EventTarget {
     // Not while the container is hidden: the browser then scrolls the document to its start, which is not a move.
     if (this.#index < 0 || doc !== this.#frame.contentDocument || !this.#stage.offsetWidth) return
     const page = scrolledPage(doc, this.#pagination)
-    if (page !== this.#page && page < this.#pagination.pages) this.#setPage(page)
+    // Not a page that is not there: in a document with dir="rtl", the browser scrolls it to the left of its start.
+    if (page !== this.#page && page >= 0 && page < this.#pagination.pages) this.#setPage(page)
   }
 
   #setPage(page: number): void {

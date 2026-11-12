@@ -131,7 +131,8 @@ export function paginate(
 
 /** Scrolls to a page (0-based). */
 export function scrollToPage(doc: Document, { vertical, pageSize }: Pagination, page: number): void {
-  doc.scrollingElement!.scrollTo(vertical ? 0 : page * pageSize, vertical ? page * pageSize : 0)
+  // Instant, whatever the book says (scroll-behavior: smooth): each step of a smooth scroll would be taken for a page of its own.
+  doc.scrollingElement!.scrollTo({ left: vertical ? 0 : page * pageSize, top: vertical ? page * pageSize : 0, behavior: 'instant' })
 }
 
 /** The page nearest to where the document is scrolled to: the browser may scroll it to a place between pages. */
