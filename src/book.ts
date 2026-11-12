@@ -109,7 +109,8 @@ export async function openBook(source: BookSource): Promise<Book> {
 
   // EPUB 3 navigation document, falling back to the EPUB 2 NCX.
   const nav = itemList.find((item) => item.properties.includes('nav'))
-  const ncx = items.get(first(opf, 'spine')?.getAttribute('toc') ?? '')
+  // Where the spine does not name the NCX (it should), the one in the manifest.
+  const ncx = items.get(first(opf, 'spine')?.getAttribute('toc') ?? '') ?? itemList.find((item) => item.type === 'application/x-dtbncx+xml')
   const readToc = async () => (nav ? parseNav(await readXml(nav.href), nav.href) : ncx ? parseNcx(await readXml(ncx.href), ncx.href) : [])
   // A book whose table of contents cannot be read (e.g. its file is missing) can still be read.
   const toc = await readToc().catch(() => [])
@@ -209,7 +210,9 @@ export class Book {
     // other than <html> (e.g. <svg>), where the CSP below would have no effect: the HTML parser puts it in a body.
     if (doc.querySelector('parsererror') || !(doc.documentElement instanceof HTMLHtmlElement)) {
       type = 'text/html'
-      doc = parse(type)
+      // Empty elements written the XML way, e.g. <title/>, are not closed in HTML: the rest of the
+      // document would be their content, and nothing of it shown.
+      doc = parse(type, source.replace(/<([a-z][\w:.-]*)(\s[^<>]*)?\/>/gi, (tag, name: string, attrs = '') => (VOID_ELEMENTS.test(name) ? tag : `<${name}${attrs}></${name}>`)))
     }
     // Scripts in the book must never run: the viewer iframe needs "allow-scripts" (see viewer.ts),
     // so they are blocked here by CSP. Only resources from the archive (blob:/data:) are loaded.
@@ -280,9 +283,11 @@ export class Book {
   }
 
   async #rewriteCss(css: string, path: string): Promise<string> {
-    // Old EPUBs often use only the -epub- prefixed properties, which browsers ignore.
+    // Old EPUBs often use only the -epub- prefixed properties, which browsers ignore; others only
+    // the -webkit- ones, which Firefox does not know for vertical text.
     css = css
-      .replace(/-epub-text-combine\s*:\s*horizontal/g, 'text-combine-upright: all')
+      .replace(/-(?:epub|webkit)-text-combine\s*:\s*horizontal/g, 'text-combine-upright: all')
+      .replace(/-webkit-writing-mode/g, 'writing-mode')
       .replace(/-epub-(writing-mode|text-orientation|text-emphasis|word-break|line-break|hyphens)/g, '$1')
     // No "(" in a URL, and a limit on its length: without them, a long run of "url(" without
     // an end takes this a time that grows with the square of its length.
@@ -341,6 +346,8 @@ function parseXml(source: string): Document {
  * <noscript> is text when shown, and a <template> can become a shadow root.
  */
 const UNSAFE_ELEMENTS = 'noscript, template'
+/** The elements that have no end tag in HTML. */
+const VOID_ELEMENTS = /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i
 /** Types of files that cannot hold scripts, whatever is in them: bitmap images, fonts, audio and video. */
 // The whole type must match: of "image/png,text/html", browsers take the part after the comma.
 const INERT_TYPES = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|(font|audio|video)\/[a-z0-9.-]+|application\/(font-[a-z0-9.-]+|x-font-[a-z0-9.-]+|vnd\.ms-opentype))$/

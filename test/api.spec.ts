@@ -152,6 +152,43 @@ test('keeps the position while the container is hidden', async ({ page }) => {
   expect(pages[pages.length - 1]).toBe(3)
 })
 
+test('a book opened in a hidden container is shown as asked once the container is shown', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await withViewer(page, async (viewer, { openBook }, container) => {
+    const book = await openBook('/samples/nepub.epub') // vertical text
+    container.style.display = 'none' // e.g. a tab of the app that is not shown yet
+    let detail: any
+    const hidden: unknown[] = []
+    viewer.addEventListener('relocate', (e: CustomEvent) => {
+      detail = e.detail
+      if (container.style.display === 'none') hidden.push(e.detail.page, e.detail.pages, e.detail.fraction)
+    })
+    await viewer.open(book, { index: 1, progress: 0.5 })
+    container.style.display = ''
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    viewer.setOptions({}) // a re-layout as well
+    return { hidden, index: detail.index, pages: detail.pages, progress: viewer.location.progress }
+  })
+  expect(result.hidden.every(Number.isFinite)).toBe(true) // no NaN or Infinity in relocate
+  expect(result.index).toBe(1)
+  expect(result.pages).toBeGreaterThan(5) // laid out as vertical text, in pages
+  expect(result.progress).toBeCloseTo(0.5, 1)
+})
+
+test('a book opened at a place that it does not have, while a page turn of the book before is loading, is shown from its start', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await withViewer(page, async (viewer, { openBook }) => {
+    const [first, second] = await Promise.all([openBook('/samples/general.epub'), openBook('/samples/nepub.epub')])
+    await viewer.open(first)
+    const turning = viewer.goTo({ index: 2, progress: 0 }) // still loading when the next book is opened
+    await viewer.open(second, { index: 99, progress: 0 }) // e.g. a position saved for another edition
+    await turning
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    return { book: viewer.book === second, location: viewer.location }
+  })
+  expect(result).toEqual({ book: true, location: { index: 0, progress: 0 } })
+})
+
 test('shows nothing of a page that the frame has gone to by itself, and reports it', async ({ page }) => {
   await page.goto('/app/')
   const result = await withViewer(page, async (viewer, { openBook }, container) => {

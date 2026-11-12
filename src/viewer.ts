@@ -68,6 +68,16 @@ export interface EpubViewer {
   removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void
 }
 
+/**
+ * A place in a section: the element `fragment`, or the page that `reach` (0 to 1) of the section
+ * falls on, or the one that starts at `progress` (0 to 1).
+ */
+interface Place {
+  progress?: number
+  reach?: number
+  fragment?: string
+}
+
 /** A frame, or its slot, that fills the room it is given. */
 const FILL = 'width:100%;height:100%'
 /** The pagination of a fixed-layout page: it is a page as it is. */
@@ -103,6 +113,8 @@ export class EpubViewer extends EventTarget {
   #page = 0
   /** The text that the page began with before the re-layouts since the last navigation. */
   #anchor?: Range
+  /** Where in the section to go once the container, which is hidden, is shown: there are no pages before (see #place). */
+  #pending?: Place
 
   // Navigations (see #display) overlap, as they wait for files to load.
   /** The number of the navigation started last. */
@@ -164,7 +176,9 @@ export class EpubViewer extends EventTarget {
     this.#book = book
     this.#index = -1
     this.#shown = []
+    this.#pending = undefined
     this.#committed = ++this.#navigation // navigations of the book before give up
+    this.#busy = false // they do not reset it themselves any more, not being the latest
     const start = { index: Math.max(0, book.sections.findIndex((s) => s.linear)), progress: 0 }
     try {
       await this.goTo(target ?? start)
@@ -333,7 +347,7 @@ export class EpubViewer extends EventTarget {
   // ---- Navigation
 
   async #turn(step: 1 | -1): Promise<void> {
-    if (!this.#book || this.#busy || this.#index < 0) return
+    if (!this.#book || this.#busy || this.#index < 0 || this.#pending) return
     const page = this.#page + step
     if (page >= 0 && page < this.#pagination.pages) return this.#showPage(page)
     const index = this.#neighbor(step)
@@ -343,7 +357,7 @@ export class EpubViewer extends EventTarget {
 
   /** Shows the page that `fraction` of the whole book falls on: the reverse of the fraction of the relocate event. */
   async #seek(fraction: number): Promise<void> {
-    const sizes = (this.#book?.sections ?? []).map((section) => section.size)
+    const sizes = this.#sizes()
     const part = Math.min(Math.max(fraction, 0), 1)
     // A page ends at (page + 1) / pages; the small amounts make up for rounding errors, which
     // would lead to the page after the one that reported the fraction.
@@ -352,15 +366,18 @@ export class EpubViewer extends EventTarget {
     const total = sizes.reduce((a, b) => a + b, 0)
     let rest = part * total
     let index = 0
-    while (index < sizes.length - 1 && rest > sizes[index] + total * 1e-9) rest -= sizes[index++]
+    // (Sections that count for nothing are passed over: the start of the book is its first page in the reading order.)
+    while (index < sizes.length - 1 && (rest > sizes[index] + total * 1e-9 || !sizes[index])) rest -= sizes[index++]
     await this.#display(index, { reach: sizes[index] ? rest / sizes[index] : 0 })
   }
 
-  /**
-   * Shows a section. The page of it: the one with the element `fragment`, or the one that `reach`
-   * (0 to 1) of the section falls on, or the one that starts at `progress` (0 to 1).
-   */
-  async #display(index: number, { progress = 0, reach, fragment }: { progress?: number; reach?: number; fragment?: string }): Promise<void> {
+  /** The sizes of the sections as they count for the progress through the book: nothing for those outside of the reading order (linear="no"). */
+  #sizes(): number[] {
+    return (this.#book?.sections ?? []).map((section) => (section.linear || this.#fixed ? section.size : 0))
+  }
+
+  /** Shows a section, at a place in it. */
+  async #display(index: number, place: Place): Promise<void> {
     const book = this.#book
     if (!book?.sections[index]) return
     const navigation = ++this.#navigation
@@ -391,12 +408,7 @@ export class EpubViewer extends EventTarget {
         this.#shown = indices
         docs.forEach((doc, i) => this.#setup(doc, indices[i]))
       }
-      this.#layout()
-      const target = !this.#fixed && fragment ? this.#frame.contentDocument!.getElementById(fragment) : null
-      const { pages } = this.#pagination
-      // A page ends at (page + 1) / pages of the section; the small amount is for rounding errors.
-      const page = reach === undefined ? Math.round(progress * pages) : Math.ceil(reach * pages - 1e-6) - 1
-      this.#showPage(target ? pageOf(this.#frame.contentDocument!, this.#pagination, target) : page)
+      this.#place(place)
       // What the next page turn leads to is made ready ahead of time (its files are unpacked).
       const next = this.#neighbor(1)
       for (const i of next === undefined ? [] : this.#shownWith(next)) book.getUrl(book.sections[i].href).catch(() => {})
@@ -405,6 +417,23 @@ export class EpubViewer extends EventTarget {
       // end) must not block page turns for good, once a later navigation has shown a page.
       if (navigation === this.#navigation) this.#busy = false
     }
+  }
+
+  /**
+   * Lays out the section shown, and shows the page of it that `place` is on. Text in a hidden
+   * container (it has no size) cannot be split into pages: the place is kept until it is shown.
+   */
+  #place(place: Place): void {
+    const { width, height } = this.#stage.getBoundingClientRect()
+    this.#layout()
+    this.#pending = this.#fixed || (width && height) ? undefined : place
+    if (this.#pending) return
+    const { progress = 0, reach, fragment } = place
+    const target = !this.#fixed && fragment ? this.#frame.contentDocument!.getElementById(fragment) : null
+    const { pages } = this.#pagination
+    // A page ends at (page + 1) / pages of the section; the small amount is for rounding errors.
+    const page = reach === undefined ? Math.round(progress * pages) : Math.ceil(reach * pages - 1e-6) - 1
+    this.#showPage(target ? pageOf(this.#frame.contentDocument!, this.#pagination, target) : page)
   }
 
   /** Prepares a document that has been loaded into a frame. */
@@ -419,6 +448,20 @@ export class EpubViewer extends EventTarget {
       this.#style = style
       this.#bookWritingMode = doc.defaultView!.getComputedStyle(doc.body ?? doc.documentElement).writingMode
       doc.addEventListener('scroll', this.#onScroll)
+      // A section that begins with an image, e.g. <p><img/></p>: the margins above it, which are
+      // not dropped at the start of a section, would push an image as high as the page to the
+      // next page, and leave the first one empty.
+      const above: HTMLElement[] = []
+      let first: Element | null = doc.body
+      while (first && !first.matches('img, svg')) {
+        above.push(first as HTMLElement)
+        const content: ChildNode | undefined = [...first.childNodes].find((node) => node.nodeType === Node.ELEMENT_NODE || node.textContent!.trim())
+        first = content?.nodeType === Node.ELEMENT_NODE ? (content as Element) : null
+      }
+      if (first) for (const el of above.slice(1)) el.style.setProperty('margin-block-start', '0', 'important')
+      // An SVG that is told to stretch to its box (the cover page that calibre makes): the box is
+      // fitted to the page here, and does not have the shape of the image.
+      for (const svg of doc.querySelectorAll('svg[preserveAspectRatio="none"]')) svg.removeAttribute('preserveAspectRatio')
     }
     this.#input.attach(doc)
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index, doc } }))
@@ -459,6 +502,11 @@ export class EpubViewer extends EventTarget {
     }
     const doc = this.#frame.contentDocument
     if (!doc || !this.#style) return
+    if (!this.#bookWritingMode) {
+      // Firefox has no computed style for a document in a hidden frame: read now that it is shown, without our rules.
+      this.#style.textContent = ''
+      this.#bookWritingMode = doc.defaultView!.getComputedStyle(doc.body ?? doc.documentElement).writingMode
+    }
     const { maxWidth } = this.#options
     this.#styleFrame(this.#frame, `${FILL};max-width:${maxWidth > 0 ? `${maxWidth}px` : 'none'}`, FILL)
     this.#stage.style.flexDirection = ''
@@ -473,6 +521,7 @@ export class EpubViewer extends EventTarget {
     // out, and the position must not be lost; this is called again when it is shown.
     // Nor is there after the book has taken the frame elsewhere: the position is kept as well.
     if (this.#index < 0 || !width || !height || this.#emptied) return
+    if (this.#pending) return this.#place(this.#pending) // shown while the container was hidden: laid out only now
     if (this.#fixed) {
       if (this.#shownWith(this.#index).join() === this.#shown.join()) {
         this.#layout() // scaled anew
@@ -519,7 +568,7 @@ export class EpubViewer extends EventTarget {
   #setPage(page: number): void {
     this.#anchor = undefined
     this.#page = page
-    const sizes = this.#book!.sections.map((s) => s.size)
+    const sizes = this.#sizes()
     const { pages } = this.#pagination
     // In a fixed-layout book every section counts as one page; otherwise by the size of the sections.
     const total = sizes.reduce((a, b) => a + b, 0) || 1

@@ -80,14 +80,32 @@ export function paginate(
     body :not(a) { color: inherit !important; }
     a:link, a:visited { color: ${theme.link} !important; }
     img, svg, video {
-      max-width: ${vertical ? w - 2 * m : columnWidth}px !important;
-      max-height: ${h - 2 * m}px !important;
+      /* No larger than a page, nor than the room that is left by what they are in (e.g. a <figure>, which has margins). */
+      max-width: ${vertical ? `${w - 2 * m}px` : `min(100%, ${columnWidth}px)`} !important;
+      max-height: ${vertical ? `min(100%, ${h - 2 * m}px)` : `${h - 2 * m}px`} !important;
       object-fit: contain;
       break-inside: avoid;
     }`
   const scroller = doc.scrollingElement!
   const scrollSize = vertical ? scroller.scrollHeight : scroller.scrollWidth
-  return { writingMode, vertical, pageSize, pages: Math.max(1, Math.ceil((scrollSize - m) / pageSize)) }
+  // Where the content ends. WebKit also counts a column that only holds the margin after the last
+  // element as something to scroll to: an empty page at the end of the section.
+  const range = doc.createRange()
+  range.selectNodeContents(doc.body ?? doc.documentElement)
+  const rect = range.getBoundingClientRect()
+  const end = vertical ? rect.bottom + scroller.scrollTop : rect.right + scroller.scrollLeft
+  const pages = Math.max(1, Math.ceil((Math.min(scrollSize, end) - m) / pageSize))
+  // What can be scrolled ends with the last column: without the padding after it, and in a spread
+  // without the second column where there is none. The last page could not be scrolled to as a
+  // whole, and was shown shifted. A mark at the end of the last page gives it the room.
+  const [along, across] = vertical ? ['top', 'left'] : ['left', 'top']
+  style.textContent += `
+    html::after {
+      content: '' !important; display: block !important; position: absolute !important;
+      ${along}: ${pages * pageSize - 1}px !important; ${across}: 0 !important;
+      width: 1px !important; height: 1px !important;
+    }`
+  return { writingMode, vertical, pageSize, pages }
 }
 
 /** Scrolls to a page (0-based). */
