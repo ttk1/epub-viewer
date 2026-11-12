@@ -38,10 +38,16 @@ const CSP =
 
 /**
  * Resolves `href` relative to the archive path `base`.
- * Returns "path#fragment" inside the archive, or undefined for external URLs (http:, mailto:, data:, ...).
+ * Returns "path#fragment" inside the archive, or undefined for external URLs (http:, mailto:, data:, ...)
+ * and malformed ones.
  */
 export function resolvePath(href: string, base: string): string | undefined {
-  const url = new URL(href, BASE + base.split('/').map(encodeURIComponent).join('/'))
+  let url
+  try {
+    url = new URL(href, BASE + base.split('/').map(encodeURIComponent).join('/'))
+  } catch {
+    return undefined
+  }
   if (!url.href.startsWith(BASE)) return undefined
   const path = url.pathname.slice(1) + url.hash
   try {
@@ -109,6 +115,8 @@ export class Book {
   readonly #types: Map<string, string>
   readonly #cover?: string
   readonly #urls = new Map<string, Promise<string>>()
+  /** For each file being rewritten, the files that it refers to: their URLs go into its own. */
+  readonly #references = new Map<string, Set<string>>()
 
   /** Use `openBook()` instead of calling this directly. */
   constructor(
@@ -189,6 +197,9 @@ export class Book {
     for (const el of doc.querySelectorAll('meta[http-equiv]')) {
       if (el.getAttribute('http-equiv')!.toLowerCase() === 'refresh') el.remove()
     }
+    // The images in srcset would not be found (they are relative to a blob: URL now), and browsers
+    // do not fall back to src then. So only src, which is rewritten below, is kept.
+    for (const el of doc.querySelectorAll('[srcset]')) el.removeAttribute('srcset')
 
     const targets = [
       ['[src]', 'src'],
@@ -206,6 +217,9 @@ export class Book {
       ),
       ...[...doc.querySelectorAll('style')].map(async (el) => {
         el.textContent = await this.#rewriteCss(el.textContent ?? '', path)
+      }),
+      ...[...doc.querySelectorAll('[style]')].map(async (el) => {
+        el.setAttribute('style', await this.#rewriteCss(el.getAttribute('style')!, path))
       }),
     ])
     const html =
@@ -230,8 +244,23 @@ export class Book {
 
   /** Converts a reference found in the file at `base` into a blob: URL (external URLs are kept as-is). */
   async #resolveUrl(href: string, base: string): Promise<string> {
-    const path = resolvePath(href, base)?.split('#')[0]
-    return path && this.#zip.has(path) ? this.getUrl(path) : href
+    const [path, fragment] = resolvePath(href, base)?.split('#') ?? []
+    // A reference back to the file itself is kept as it is, be it direct, e.g. url(#gradient), or
+    // through other files, e.g. stylesheets that import each other: the URL of this file would have
+    // to be known before it can be made, and waiting for it would never end.
+    if (!path || !this.#zip.has(path) || this.#refersTo(path, base)) return href
+    let references = this.#references.get(base)
+    if (!references) this.#references.set(base, (references = new Set()))
+    references.add(path)
+    return (await this.getUrl(path)) + (fragment ? `#${fragment}` : '')
+  }
+
+  /** Whether `from` is `target`, or refers to it through the references found so far. */
+  #refersTo(from: string, target: string, seen = new Set<string>()): boolean {
+    if (from === target) return true
+    if (seen.has(from)) return false
+    seen.add(from)
+    return [...(this.#references.get(from) ?? [])].some((path) => this.#refersTo(path, target, seen))
   }
 }
 
