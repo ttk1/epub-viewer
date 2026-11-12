@@ -427,6 +427,8 @@ test.describe('general EPUB 2 (horizontal)', () => {
   test('turns pages by clicking the left / right side of the page', async ({ page }) => {
     const frame = page.locator('iframe')
     const box = (await frame.boundingBox())!
+    await click(page, box.x + box.width / 2, box.y + box.height - 40) // the middle: nothing
+    await expect(page.locator('.progress')).toHaveText(/^1 \//)
     await click(page, box.x + box.width * 0.9, box.y + box.height / 2)
     await expect(page.locator('.progress')).toHaveText(/^2 \//)
     await click(page, box.x + box.width * 0.1, box.y + box.height / 2)
@@ -551,6 +553,11 @@ test.describe('general EPUB 2 (horizontal)', () => {
     expect(await lineHeight()).toBe('99px')
     await setting(page, 'lineHeight', '0')
     expect(await lineHeight()).toBe('135px')
+  })
+
+  test('shows the settings for text only', async ({ page }) => {
+    await openSettings(page)
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '表示方向', '見開き', 'テーマ'])
   })
 
   test('lays out horizontal text in two columns for a spread', async ({ page }) => {
@@ -690,6 +697,18 @@ test.describe('fixed-layout EPUB (manga, right to left)', () => {
     expect(await titles(page)).toEqual(['Page 5', 'Page 4'])
   })
 
+  test('follows the direction chosen for a book that does not say, and shows the settings for pages only', async ({ page }) => {
+    await open(page, 'fixed-plain')
+    await openSettings(page)
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['見開き', '開き方向', 'テーマ'])
+    await setting(page, 'direction', 'ltr')
+    await page.locator('.title').click() // closes the menu
+    await press(page, 'ArrowRight') // right = next, for a book read from left to right
+    expect(await titles(page)).toEqual(['Page 2', 'Page 3']) // the first page of the pair on the left
+    await press(page, 'ArrowLeft')
+    expect(await titles(page)).toEqual(['Page 1'])
+  })
+
   test('jumps via the table of contents and resumes after reload', async ({ page }) => {
     await open(page)
     await chooseChapter(page, '第2話') // page 4
@@ -698,6 +717,27 @@ test.describe('fixed-layout EPUB (manga, right to left)', () => {
     await page.reload()
     await expect.poll(() => titles(page)).toEqual(['Page 5', 'Page 4'])
   })
+})
+
+test('a click on the middle of the page is reported as a tap, one on the side turns the page', async ({ page }) => {
+  await page.goto('/app/')
+  // A viewer of its own, over the (empty) app.
+  await page.evaluate(async () => {
+    const { EpubViewer, openBook } = await import('/dist/src/index.js' as string)
+    const container = document.createElement('div')
+    container.style.cssText = 'position: fixed; inset: 0'
+    document.body.append(container)
+    const viewer = new EpubViewer(container, { fontSize: 40 })
+    viewer.addEventListener('relocate', (e: CustomEvent) => (document.title = `page ${e.detail.page + 1}`))
+    viewer.addEventListener('tap', (e: CustomEvent) => (document.body.dataset.taps = `${document.body.dataset.taps ?? ''} ${e.detail.x.toFixed(2)}`))
+    await viewer.open(await openBook('/samples/general.epub'))
+  })
+  await expect(page).toHaveTitle('page 1')
+  await click(page, 640, 700)
+  await expect(page).toHaveTitle('page 1')
+  await click(page, 1152, 700)
+  await expect(page).toHaveTitle('page 2')
+  expect(await page.evaluate(() => document.body.dataset.taps)).toBe(' 0.50') // only the first click
 })
 
 test('with click: false, clicks do not turn pages but links still work', async ({ page }) => {
@@ -710,11 +750,14 @@ test('with click: false, clicks do not turn pages but links still work', async (
     document.body.append(container)
     const viewer = new EpubViewer(container, { click: false })
     viewer.addEventListener('relocate', (e: CustomEvent) => (document.title = `page ${e.detail.page + 1}`))
+    viewer.addEventListener('tap', (e: CustomEvent) => (document.body.dataset.tap = e.detail.x.toFixed(2)))
     await viewer.open(await openBook('/samples/general.epub'))
   })
   await expect(page).toHaveTitle('page 1')
-  await click(page, 1200, 600) // the right side
+  await click(page, 1152, 600) // the right side
   await expect(page).toHaveTitle('page 1')
+  // The click is passed on instead, with its position across the page, for the app to act on.
+  expect(await page.evaluate(() => document.body.dataset.tap)).toBe('0.90')
   await content(page).locator('#to-2-1').click()
   await expect.poll(() => heading(page)).toBe('Chapter 2')
 })
