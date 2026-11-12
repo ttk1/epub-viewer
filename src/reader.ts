@@ -176,6 +176,8 @@ export class EpubReader {
   #positionKey = ''
   /** The latest call of open(). */
   #opening?: Promise<Book>
+  /** The section whose entry is marked in the table of contents. */
+  #marked = -1
   /**
    * Marks the root while a menu is open, for the cover over the page. From the `open` attribute
    * itself: the toggle event comes too late for a click that follows right after the menu opens.
@@ -382,12 +384,15 @@ export class EpubReader {
     }
     add(book.toc, 0)
     this.#part('toc-list').replaceChildren(...buttons)
+    this.#marked = -1
     // A single entry leads nowhere but to the section already shown (e.g. a book of one episode).
     this.#part('toc').hidden = buttons.length < 2
   }
 
   /** Marks the table of contents entry that the section at `index` belongs to: the last one at or before it. */
   #markCurrent(index: number): void {
+    if (index === this.#marked) return // called at every page turn; the entry only changes with the section
+    this.#marked = index
     let current: Element | undefined
     let best = -1
     for (const button of this.#part<HTMLElement>('toc-list').children as HTMLCollectionOf<HTMLButtonElement>) {
