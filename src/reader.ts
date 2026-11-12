@@ -1,7 +1,8 @@
 import { openBook, type Book, type BookSource, type TocItem } from './book.ts'
-import { EpubViewer, fonts, themes, type Location, type Theme, type ViewerOptions } from './viewer.ts'
+import { fonts, themes, type Theme, type ViewerOptions } from './options.ts'
+import { EpubViewer, type BookLocation } from './viewer.ts'
 
-/** Settings the user changes from the toolbar. Saved in localStorage and shared by all books. */
+/** Settings the user changes from the toolbar. Saved (see ReaderOptions.storage) and shared by all books. */
 export interface ReaderSettings {
   /** "system" follows the OS dark mode setting. */
   theme: 'system' | 'light' | 'sepia' | 'dark'
@@ -20,7 +21,13 @@ export interface ReaderSettings {
 }
 
 export interface ReaderOptions {
-  /** Prefix of the localStorage keys for settings and reading positions. "" disables saving. */
+  /**
+   * Where settings and reading positions are saved: anything with getItem / setItem like
+   * localStorage, which is the default. Give an object of your own to keep them elsewhere (e.g. to
+   * send them to a server as well), or null to save nothing.
+   */
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null
+  /** Prefix of the keys in the storage: "<storageKey>:settings" and "<storageKey>:position:<key of the book>". */
   storageKey: string
   /** Initial settings, used until the user changes them. */
   settings: Partial<ReaderSettings>
@@ -34,8 +41,8 @@ export interface OpenOptions {
    * Give one when books share an identifier, e.g. per-episode EPUBs of the same novel.
    */
   key?: string
-  /** Where to start (a Location or a TocItem href). Overrides the saved position. */
-  location?: Location | string
+  /** Where to start (a BookLocation or a TocItem href). Overrides the saved position. */
+  location?: BookLocation | string
 }
 
 const DEFAULT_SETTINGS: ReaderSettings = {
@@ -176,7 +183,7 @@ const STYLE = `
 /**
  * A ready-made reader UI: toolbar (table of contents, progress, and a settings menu for font size,
  * font, width, writing mode and theme) + EpubViewer, with settings and reading positions saved in
- * localStorage. Add your own controls to `toolbar`, and use `viewer` for events and navigation.
+ * a storage. Add your own controls to `toolbar`, and use `viewer` for events and navigation.
  */
 export class EpubReader {
   /** The toolbar element; add your own buttons or links to it. */
@@ -184,6 +191,7 @@ export class EpubReader {
   readonly viewer: EpubViewer
   #book?: Book
   readonly #root: HTMLElement
+  readonly #storage: ReaderOptions['storage']
   readonly #storageKey: string
   readonly #systemDark = matchMedia('(prefers-color-scheme: dark)')
   #settings: ReaderSettings
@@ -201,7 +209,10 @@ export class EpubReader {
   })
 
   /** `root` must have a height; the reader fills it. */
-  constructor(root: HTMLElement, { storageKey = 'epub-viewer', settings = {}, viewer = {} }: Partial<ReaderOptions> = {}) {
+  constructor(
+    root: HTMLElement,
+    { storage = defaultStorage(), storageKey = 'epub-viewer', settings = {}, viewer = {} }: Partial<ReaderOptions> = {},
+  ) {
     const doc = root.ownerDocument
     if (!doc.getElementById('epub-reader-style')) {
       doc.head.append(Object.assign(doc.createElement('style'), { id: 'epub-reader-style', textContent: STYLE }))
@@ -209,6 +220,7 @@ export class EpubReader {
     root.classList.add('epub-reader')
     root.innerHTML = `<header class="toolbar">${TOOLBAR}</header><div class="viewer"></div>`
     this.#root = root
+    this.#storage = storage
     this.#storageKey = storageKey
     this.toolbar = root.querySelector('.toolbar')!
     this.viewer = new EpubViewer(root.querySelector('.viewer')!, viewer)
@@ -216,7 +228,10 @@ export class EpubReader {
 
     this.viewer.addEventListener('relocate', (e) => {
       const { index, page, pages, fraction } = e.detail
-      this.#part('pages').textContent = `${page + 1} / ${pages}`
+      // The pages of the section. A fixed-layout book has one page to a section, so there the sections are counted.
+      const book = this.#book!
+      const fixed = book.metadata.layout === 'pre-paginated'
+      this.#part('pages').textContent = fixed ? `${index + 1} / ${book.sections.length}` : `${page + 1} / ${pages}`
       this.#part('percent').textContent = `（${Math.round(fraction * 100)}%）`
       root.style.setProperty('--progress', String(fraction))
       this.#markCurrent(index)
@@ -423,20 +438,27 @@ export class EpubReader {
     current?.setAttribute('aria-current', 'true')
   }
 
-  // localStorage may be unavailable (private mode etc.); the reader still works without it.
+  // The storage may fail (it is full, or its content is not ours); the reader still works without it.
   #load<T>(name: string): T | undefined {
-    if (!this.#storageKey) return undefined
     try {
-      return JSON.parse(localStorage.getItem(`${this.#storageKey}:${name}`) ?? 'null') ?? undefined
+      return JSON.parse(this.#storage?.getItem(`${this.#storageKey}:${name}`) ?? 'null') ?? undefined
     } catch {
       return undefined
     }
   }
 
   #save(name: string, value: unknown): void {
-    if (!this.#storageKey) return
     try {
-      localStorage.setItem(`${this.#storageKey}:${name}`, JSON.stringify(value))
+      this.#storage?.setItem(`${this.#storageKey}:${name}`, JSON.stringify(value))
     } catch {}
+  }
+}
+
+/** localStorage, where the browser lets the page use it (not in some private modes or sandboxed frames). */
+function defaultStorage(): Storage | null {
+  try {
+    return localStorage
+  } catch {
+    return null
   }
 }
