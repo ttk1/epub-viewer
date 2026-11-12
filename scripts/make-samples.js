@@ -3,6 +3,8 @@
 //                       in 2 chapters, each with an illustration, emphasis dots, an empty line and a
 //                       run of "…" longer than a page
 //   episode-{1,2,3}.epub : nepub-style, one episode each (for examples/series.html)
+//   fixed.epub        : fixed layout (manga): one image per page, right to left, with the sides of the pages
+//   fixed-plain.epub  : the same, without the sides
 //   general.epub      : EPUB 2 style (NCX, OEBPS/, horizontal English, image, @import, non-linear item,
 //                       long <pre> line), plus broken and hostile content and a last spine item missing
 //                       from the archive
@@ -164,6 +166,44 @@ const episode = (n) => ({
   paragraphs: [...japaneseParagraphs(n, 3), longEllipsis, ...japaneseParagraphs(n, 20), ...markup, ...japaneseParagraphs(n, 37)],
 })
 
+// ---- fixed layout (manga) ----
+
+/** Pages of 600 × 900, each a single image, read from right to left. The book says which side each page is on. */
+function fixedEpub(title, sides) {
+  const pages = sides.map((side, i) => ({ id: `p${i + 1}`, side, image: png(600, 900, [40 * i, 120, 255 - 40 * i]) }))
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" xml:lang="ja" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000000002</dc:identifier>
+    <dc:title>${title}</dc:title>
+    <dc:language>ja</dc:language>
+    <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+    <meta property="rendition:layout">pre-paginated</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+${pages.map((p) => `    <item id="${p.id}" href="${p.id}.xhtml" media-type="application/xhtml+xml"/>
+    <item id="${p.id}-image" href="${p.id}.png" media-type="image/png"/>`).join('\n')}
+  </manifest>
+  <spine page-progression-direction="rtl">
+${pages.map((p) => `    <itemref idref="${p.id}"${p.side ? ` properties="${p.side}"` : ''}/>`).join('\n')}
+  </spine>
+</package>`
+  const nav = `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Navigation</title></head>
+<body><nav epub:type="toc"><ol><li><a href="p1.xhtml">表紙</a></li><li><a href="p4.xhtml">第2話</a></li></ol></nav></body></html>`
+  const page = (p, n) => `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page ${n}</title>
+<meta name="viewport" content="width=600, height=900"/>
+<style>body { margin: 0; } img { display: block; width: 600px; height: 900px; }</style></head>
+<body><img src="${p.id}.png" alt="${n} ページ"/></body></html>`
+  return createZip([
+    ['mimetype', 'application/epub+zip', true],
+    ['META-INF/container.xml', container('content.opf')],
+    ['content.opf', opf],
+    ['nav.xhtml', nav],
+    ...pages.flatMap((p, i) => [[`${p.id}.xhtml`, page(p, i + 1)], [`${p.id}.png`, p.image, true]]),
+  ])
+}
+
 // ---- general EPUB 2 ----
 
 function generalEpub() {
@@ -298,4 +338,18 @@ writeFileSync(
 // Per-episode EPUBs usually share the novel's title (and have no identifier).
 for (const n of [1, 2, 3]) writeFileSync(`samples/episode-${n}.epub`, nepubEpub('連載サンプル', [{ name: 'default', episodes: [episode(n)] }]))
 writeFileSync('samples/general.epub', generalEpub())
+// A cover, then pairs (the right page first), and a last page without a partner.
+writeFileSync(
+  'samples/fixed.epub',
+  fixedEpub('固定レイアウトサンプル', [
+    'rendition:page-spread-center',
+    'page-spread-right',
+    'page-spread-left',
+    'page-spread-right',
+    'page-spread-left',
+    'page-spread-right',
+  ]),
+)
+// The same without sides, as many books are made.
+writeFileSync('samples/fixed-plain.epub', fixedEpub('固定レイアウトサンプル', Array(5).fill('')))
 console.log('Generated samples/*.epub')
