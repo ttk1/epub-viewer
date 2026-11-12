@@ -11,7 +11,7 @@ const DEFAULT_PAGE_SIZE = [1000, 1414]
 /** The size in px that a page is made for: from its viewport meta, or else its SVG or image. */
 export function pageSize(doc: Document): number[] {
   const viewport = doc.querySelector('meta[name=viewport]')?.getAttribute('content') ?? ''
-  const box = doc.querySelector('svg')?.viewBox.baseVal
+  const box = doc.querySelector('svg')?.viewBox?.baseVal // an "svg" outside of the SVG namespace has none
   const image = doc.querySelector('img')
   const candidates = [
     ['width', 'height'].map((name) => Number(viewport.match(new RegExp(`${name}\\s*=\\s*([\\d.]+)`))?.[1])),

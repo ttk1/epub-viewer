@@ -66,8 +66,9 @@ export class ZipReader {
     const data = this.#blob.slice(start, start + entry.compressedSize, type)
     if (entry.method === 0) return data
     if (entry.method === 8) {
-      // Read in chunks and stop at the declared size: a few kilobytes of crafted data can inflate
-      // to gigabytes, which would all be held in memory.
+      // Read in chunks and stop at the declared size, so that an entry cannot turn out larger
+      // than it says (a few kilobytes of crafted data can inflate to gigabytes). The archive can
+      // still say that an entry is large; this only keeps it to its word.
       const reader = data.stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader()
       const chunks: Uint8Array<ArrayBuffer>[] = []
       for (let length = 0; ; ) {

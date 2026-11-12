@@ -77,7 +77,8 @@ export async function openBook(source: BookSource): Promise<Book> {
       el.getAttribute('id') ?? '',
       {
         href: resolvePath(el.getAttribute('href') ?? '', opfPath) ?? '',
-        type: (el.getAttribute('media-type') ?? '').trim().toLowerCase(),
+        // Without parameters ("; charset=..."), so that the kinds of files are told apart reliably.
+        type: (el.getAttribute('media-type') ?? '').split(';')[0].trim().toLowerCase(),
         properties: (el.getAttribute('properties') ?? '').split(/\s+/),
       },
     ]),
@@ -118,7 +119,8 @@ export async function openBook(source: BookSource): Promise<Book> {
   const coverId = metas.find((el) => el.getAttribute('name') === 'cover')?.getAttribute('content')
   const cover = itemList.find((item) => item.properties.includes('cover-image')) ?? items.get(coverId ?? '')
 
-  const types = new Map(itemList.map((item) => [item.href, item.type]))
+  // A file listed more than once keeps the type of its first item.
+  const types = new Map(itemList.reverse().map((item) => [item.href, item.type]))
   return new Book(zip, types, metadata, sections, toc, cover?.href)
 }
 
@@ -127,6 +129,9 @@ export class Book {
   readonly #types: Map<string, string>
   readonly #cover?: string
   readonly #urls = new Map<string, Promise<string>>()
+  /** The files shown as documents (the sections). */
+  readonly #documents: Set<string>
+  #destroyed = false
   /** For each file being rewritten, the files that it refers to: their URLs go into its own. */
   readonly #references = new Map<string, Set<string>>()
 
@@ -142,6 +147,7 @@ export class Book {
     this.#zip = zip
     this.#types = types
     this.#cover = cover
+    this.#documents = new Set(sections.map((section) => section.href))
   }
 
   /** Cover image, if the book declares one. */
@@ -152,8 +158,13 @@ export class Book {
   /**
    * Returns a blob: URL for a file in the archive. HTML and CSS are rewritten so that
    * their references (images, stylesheets, fonts) also point to blob: URLs.
+   *
+   * Only the sections are made safe to show as documents (their scripts are blocked). Do not load
+   * the URL of any other file into a frame or a new tab: an SVG image, for one, can hold scripts,
+   * which would run with the origin of your page. Using them as images, styles or fonts is fine.
    */
   getUrl(path: string): Promise<string> {
+    if (this.#destroyed) return Promise.reject(new Error('The book has been closed'))
     let url = this.#urls.get(path)
     if (!url) {
       url = this.#createUrl(path)
@@ -162,8 +173,9 @@ export class Book {
     return url
   }
 
-  /** Revokes all blob: URLs created by this book. */
+  /** Revokes all blob: URLs created by this book, and those that are still being made. No more can be had after this. */
   destroy(): void {
+    this.#destroyed = true
     for (const url of this.#urls.values()) url.then((u) => URL.revokeObjectURL(u), () => {})
     this.#urls.clear()
   }
@@ -171,16 +183,20 @@ export class Book {
   async #createUrl(path: string): Promise<string> {
     const type = this.#types.get(path) ?? ''
     let blob = await this.#zip.read(path, type)
-    if (type === 'text/css') {
+    if (this.#documents.has(path) || HTML_TYPES.includes(type)) {
+      // A section is rewritten whatever the manifest calls it elsewhere: a file can be listed
+      // twice, as a document and as something else. Shown as it is, its scripts would run.
+      blob = await this.#rewriteHtml(await blob.text(), path, HTML_TYPES.includes(type) ? type : HTML_TYPES[0])
+    } else if (type === 'text/css') {
       blob = new Blob([await this.#rewriteCss(await blob.text(), path)], { type })
-    } else if (HTML_TYPES.includes(type)) {
-      blob = await this.#rewriteHtml(await blob.text(), path, type)
     }
-    return URL.createObjectURL(blob)
+    const url = URL.createObjectURL(blob)
+    if (this.#destroyed) URL.revokeObjectURL(url)
+    return url
   }
 
   async #rewriteHtml(source: string, path: string, type: string): Promise<Blob> {
-    const parse = (t: string) => new DOMParser().parseFromString(source, t as DOMParserSupportedType)
+    const parse = (t: string, text = source) => new DOMParser().parseFromString(text, t as DOMParserSupportedType)
     let doc = parse(type)
     // Broken XHTML is common in the wild; fall back to the forgiving HTML parser. Likewise for a root
     // other than <html> (e.g. <svg>), where the CSP below would have no effect: the HTML parser puts it in a body.
@@ -207,16 +223,17 @@ export class Book {
     }
     // CSP does not cover <meta http-equiv="refresh">, which could navigate the page anywhere.
     for (const el of doc.querySelectorAll('meta[http-equiv]')) {
-      if (el.getAttribute('http-equiv')!.toLowerCase() === 'refresh') el.remove()
+      if (isRefresh(el)) el.remove()
     }
     // The images in srcset would not be found (they are relative to a blob: URL now), and browsers
     // do not fall back to src then. So only src, which is rewritten below, is kept.
     for (const el of doc.querySelectorAll('[srcset]')) el.removeAttribute('srcset')
+    for (const el of doc.querySelectorAll(UNSAFE_ELEMENTS)) el.remove()
 
     const targets = [
       ['[src]', 'src'],
       ['[poster]', 'poster'],
-      ['link[href]', 'href'],
+      ['link[rel~="stylesheet" i][href]', 'href'], // not rel="next" and the like, which would pull in the whole book
       ['image', 'href'],
       ['image', 'xlink:href'],
     ]
@@ -234,11 +251,14 @@ export class Book {
         el.setAttribute('style', await this.#rewriteCss(el.getAttribute('style')!, path))
       }),
     ])
-    const html =
-      type === 'text/html'
-        ? `<!DOCTYPE html>${doc.documentElement.outerHTML}`
-        : new XMLSerializer().serializeToString(doc)
-    return new Blob([html], { type })
+    if (type !== 'text/html') return new Blob([new XMLSerializer().serializeToString(doc)], { type })
+    const html = `<!DOCTYPE html>${doc.documentElement.outerHTML}`
+    // HTML does not always read back as it was written: text or a comment can come back as an
+    // element (e.g. a <meta> that takes the page elsewhere). Nothing is shown of a document in
+    // which something that was removed above is there again.
+    const again = parse(type, html)
+    const unsafe = again.querySelector(UNSAFE_ELEMENTS) ?? [...again.querySelectorAll('meta[http-equiv]')].find(isRefresh)
+    return new Blob([unsafe ? `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${CSP}">` : html], { type })
   }
 
   async #rewriteCss(css: string, path: string): Promise<string> {
@@ -246,7 +266,9 @@ export class Book {
     css = css
       .replace(/-epub-text-combine\s*:\s*horizontal/g, 'text-combine-upright: all')
       .replace(/-epub-(writing-mode|text-orientation|text-emphasis|word-break|line-break|hyphens)/g, '$1')
-    const pattern = /url\(\s*(['"]?)([^'")]+)\1\s*\)|@import\s+(['"])([^'"]+)\3/g
+    // No "(" in a URL, and a limit on its length: without them, a long run of "url(" without
+    // an end takes this a time that grows with the square of its length.
+    const pattern = /url\(\s*(['"]?)([^'"()]{1,4000})\1\s*\)|@import\s+(['"])([^'"]{1,4000})\3/g
     const urls = await Promise.all(
       [...css.matchAll(pattern)].map((m) => this.#resolveUrl((m[2] ?? m[4]).trim(), path)),
     )
@@ -264,7 +286,9 @@ export class Book {
     let references = this.#references.get(base)
     if (!references) this.#references.set(base, (references = new Set()))
     references.add(path)
-    return (await this.getUrl(path)) + (fragment ? `#${fragment}` : '')
+    // A file that cannot be read is left out (e.g. an image shows as broken); the rest is still shown.
+    const url = await this.getUrl(path).catch(() => undefined)
+    return url ? url + (fragment ? `#${fragment}` : '') : href
   }
 
   /** Whether `from` is `target`, or refers to it through the references found so far. */
@@ -290,6 +314,14 @@ function parseXml(source: string): Document {
   const doc = new DOMParser().parseFromString(source, 'application/xml')
   return doc.querySelector('parsererror') ? new DOMParser().parseFromString(source, 'text/html') : doc
 }
+
+/**
+ * Elements that are not the same when a document is rewritten (scripts are off) and when it is
+ * shown (scripts are "on", only blocked), so that what is inside them escapes the rewriting:
+ * <noscript> is text when shown, and a <template> can become a shadow root.
+ */
+const UNSAFE_ELEMENTS = 'noscript, template'
+const isRefresh = (meta: Element) => meta.getAttribute('http-equiv')!.trim().toLowerCase() === 'refresh'
 
 // Namespace-agnostic helpers (OPF/NCX/XHTML use various prefixes).
 const all = (node: Document | Element, name: string) => [...node.getElementsByTagNameNS('*', name)]
