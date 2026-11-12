@@ -53,6 +53,11 @@ export interface ViewerOptions {
    */
   spread: 'auto' | 'always' | 'never'
   /**
+   * Fixed layout: the side that pages progress towards, "rtl" for a book opened from the right
+   * (manga). "auto" follows the book; give it for books that are made without saying.
+   */
+  direction: 'auto' | 'ltr' | 'rtl'
+  /**
    * Page-turn keys, clicks, wheel gestures and swipes within this many ms of the previous accepted one are ignored, so that
    * chattering (e.g. remote controls) does not skip pages. Keep it short so fast deliberate presses still work.
    */
@@ -87,6 +92,12 @@ export interface EpubViewerEventMap {
   sectionload: CustomEvent<{ index: number; doc: Document }>
   /** An external http(s): / mailto: link was clicked. Call preventDefault() to stop it from opening in a new tab. */
   link: CustomEvent<{ href: string }>
+  /**
+   * A click or tap on the page that neither follows a link nor turns the page: on the middle of the
+   * page, or anywhere with the `click` option off. `x` is the position across the page(s), from
+   * 0 (left edge) to 1. For showing and hiding controls, or page turns of your own.
+   */
+  tap: CustomEvent<{ x: number }>
   /** A page turn by key, click, wheel or swipe, or a link in the book, failed (e.g. a broken section). Calls from code reject instead. */
   error: CustomEvent<{ error: unknown }>
 }
@@ -120,6 +131,7 @@ const DEFAULTS: ViewerOptions = {
   wheel: true,
   swipe: true,
   spread: 'auto',
+  direction: 'auto',
   cooldown: 100,
 }
 
@@ -296,7 +308,13 @@ export class EpubViewer extends EventTarget {
   }
 
   get #rtl(): boolean {
-    return this.#fixed ? this.#book!.metadata.direction === 'rtl' : this.#writingMode === 'vertical-rl'
+    return this.#fixed ? this.#direction === 'rtl' : this.#writingMode === 'vertical-rl'
+  }
+
+  /** Fixed layout: the side that pages progress towards. */
+  get #direction(): 'ltr' | 'rtl' {
+    const { direction } = this.#options
+    return direction === 'auto' ? this.#book!.metadata.direction : direction
   }
 
   /** The book is a fixed-layout one: every section is a page. */
@@ -349,12 +367,12 @@ export class EpubViewer extends EventTarget {
 
   /** Fixed layout: the pages (section numbers) shown together, in reading order. */
   #spreads(): number[][] {
-    const { sections, metadata } = this.#book!
+    const { sections } = this.#book!
     const pages = sections.flatMap((section, index) => (section.linear ? [index] : []))
     const { width, height } = this.#stage.getBoundingClientRect()
     if (!this.#double(width, height)) return pages.map((index) => [index])
     // The side that the first page of a pair is on, and the side of the second.
-    const [first, second] = metadata.direction === 'rtl' ? ['right', 'left'] : ['left', 'right']
+    const [first, second] = this.#direction === 'rtl' ? ['right', 'left'] : ['left', 'right']
     const spreads: number[][] = []
     let waiting: number | undefined // a page on the first side, to be joined by the next one
     for (const index of pages) {
@@ -700,14 +718,14 @@ export class EpubViewer extends EventTarget {
       this.#followLink(href)
       return
     }
-    if (!this.#options.click || this.#selecting) return
+    if (this.#selecting) return
     // The position within the page(s) as shown: the frame may be scaled, or one of two.
     const frame = (e.target as Element).ownerDocument.defaultView!.frameElement!
     const rect = frame.getBoundingClientRect()
     const { left, right } = this.#pagesRect()
     const x = (rect.left + (e.clientX * rect.width) / frame.clientWidth - left) / (right - left)
-    if (x < 1 / 3) this.#inputTurn(this.goLeft)
-    else if (x > 2 / 3) this.#inputTurn(this.goRight)
+    if (!this.#options.click || (x >= 1 / 3 && x <= 2 / 3)) this.dispatchEvent(new CustomEvent('tap', { detail: { x } }))
+    else this.#inputTurn(x < 1 / 3 ? this.goLeft : this.goRight)
   }
 
   /**
