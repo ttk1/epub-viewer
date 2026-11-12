@@ -161,7 +161,8 @@ export class EpubViewer extends EventTarget {
     await this.goTo(target ?? start)
     // A target that is not in this book, e.g. one saved for an older edition: don't leave the page
     // empty. (Unless another book has been opened meanwhile: that one is not ours to move.)
-    if (this.#book === book && this.#index < 0) await this.goTo(start)
+    // Nor while another move in this book is under way: that is where the caller wants to be.
+    if (this.#book === book && this.#index < 0 && !this.#busy) await this.goTo(start)
   }
 
   /** Moves to `target`. Does nothing if that is not in the book. */
