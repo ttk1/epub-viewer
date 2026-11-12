@@ -29,6 +29,7 @@ export interface TocItem {
 }
 
 const BASE = 'https://epub.invalid/'
+const XHTML = 'http://www.w3.org/1999/xhtml'
 const HTML_TYPES = ['application/xhtml+xml', 'text/html']
 // frame-src / object-src: an SVG from the archive embedded with <iframe>/<object>/<embed> is a
 // document of its own, same-origin with the host page, and WebKit does not pass this CSP down to it.
@@ -64,7 +65,7 @@ export async function openBook(source: BookSource): Promise<Book> {
       el.getAttribute('id') ?? '',
       {
         href: resolvePath(el.getAttribute('href') ?? '', opfPath) ?? '',
-        type: el.getAttribute('media-type') ?? '',
+        type: (el.getAttribute('media-type') ?? '').trim().toLowerCase(),
         properties: (el.getAttribute('properties') ?? '').split(/\s+/),
       },
     ]),
@@ -73,7 +74,8 @@ export async function openBook(source: BookSource): Promise<Book> {
 
   const sections = all(opf, 'itemref').flatMap((el) => {
     const item = items.get(el.getAttribute('idref') ?? '')
-    if (!item) return []
+    // Only (X)HTML: other documents (e.g. SVG) cannot carry the CSP that blocks their scripts.
+    if (!item || !HTML_TYPES.includes(item.type)) return []
     return [{ href: item.href, linear: el.getAttribute('linear') !== 'no', size: zip.size(item.href) }]
   })
 
@@ -160,17 +162,29 @@ export class Book {
   async #rewriteHtml(source: string, path: string, type: string): Promise<Blob> {
     const parse = (t: string) => new DOMParser().parseFromString(source, t as DOMParserSupportedType)
     let doc = parse(type)
-    if (doc.querySelector('parsererror')) {
-      // Broken XHTML is common in the wild; fall back to the forgiving HTML parser.
+    // Broken XHTML is common in the wild; fall back to the forgiving HTML parser. Likewise for a root
+    // other than <html> (e.g. <svg>), where the CSP below would have no effect: the HTML parser puts it in a body.
+    if (doc.querySelector('parsererror') || !(doc.documentElement instanceof HTMLHtmlElement)) {
       type = 'text/html'
       doc = parse(type)
     }
     // Scripts in the book must never run: the viewer iframe needs "allow-scripts" (see viewer.ts),
     // so they are blocked here by CSP. Only resources from the archive (blob:/data:) are loaded.
-    const csp = doc.createElementNS('http://www.w3.org/1999/xhtml', 'meta')
+    const csp = doc.createElementNS(XHTML, 'meta')
     csp.setAttribute('http-equiv', 'Content-Security-Policy')
     csp.setAttribute('content', CSP)
-    ;(doc.head ?? doc.documentElement).prepend(csp)
+    // The CSP only works inside <head>, and only on what comes after it: XHTML may have no <head>,
+    // or a <script> before it.
+    let head = doc.documentElement.firstElementChild
+    if (!(head instanceof HTMLHeadElement)) {
+      head = doc.createElementNS(XHTML, 'head')
+      doc.documentElement.prepend(head)
+    }
+    head.prepend(csp)
+    // <?xml-stylesheet?>: an XSLT stylesheet would replace the document with one that has no CSP.
+    for (const node of [...doc.childNodes]) {
+      if (node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) node.remove()
+    }
     // CSP does not cover <meta http-equiv="refresh">, which could navigate the page anywhere.
     for (const el of doc.querySelectorAll('meta[http-equiv]')) {
       if (el.getAttribute('http-equiv')!.toLowerCase() === 'refresh') el.remove()
