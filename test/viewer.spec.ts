@@ -752,7 +752,7 @@ test('goTo({ fraction }) moves to a position in the whole book, as reported by r
     viewer.addEventListener('relocate', (e: CustomEvent) => (detail = e.detail))
     const at = async (fraction: number) => {
       await viewer.goTo({ fraction })
-      return { index: detail.index, page: detail.page, pages: detail.pages, fraction: detail.fraction }
+      return { index: detail.index, page: detail.page, pages: detail.pages, fraction: detail.fraction, indices: detail.indices }
     }
     await viewer.open(await openBook('/samples/nepub.epub'))
     const text = { start: await at(0), middle: await at(0.5), end: await at(1) }
@@ -775,7 +775,9 @@ test('goTo({ fraction }) moves to a position in the whole book, as reported by r
   expect(results.text.end.page).toBe(results.text.end.pages - 1)
   expect(results.mismatches).toEqual([])
   expect(results.pages.start).toMatchObject({ index: 0 })
-  expect(results.pages.middle).toMatchObject({ index: 1, fraction: 0.5 }) // the spread of pages 2 and 3, of 6
+  expect(results.text.middle.indices).toEqual([1])
+  // The spread of pages 2 and 3, of 6. Each page of a fixed-layout book is a section of one page.
+  expect(results.pages.middle).toMatchObject({ index: 1, indices: [1, 2], page: 0, pages: 1, fraction: 0.5 })
   expect(results.pages.end).toMatchObject({ index: 5, fraction: 1 })
 })
 
@@ -826,6 +828,36 @@ test('EpubReader.setSettings() changes and saves settings like the toolbar does'
   expect(await height()).toBe(720)
 })
 
+test('EpubReader keeps settings and positions in the storage that it is given', async ({ page }) => {
+  await page.goto('/app/')
+  const result = await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const root = document.createElement('div')
+    root.style.height = '100vh'
+    document.body.replaceChildren(root)
+    // What a site would keep on its server: here, what it has for this user, and what the reader writes.
+    const saved = new Map(Object.entries({ 'site:settings': '{"theme":"sepia"}', 'site:position:book-1': '{"index":1,"progress":0}' }))
+    const written: string[] = []
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        saved.set(key, value)
+        written.push(key)
+      },
+    }
+    const reader = new EpubReader(root, { storage, storageKey: 'site' })
+    await reader.open('/samples/nepub.epub', { key: 'book-1' })
+    const opened = { theme: reader.settings.theme, index: reader.viewer.location.index }
+    reader.setSettings({ fontSize: 30 })
+    await reader.viewer.next()
+    return { opened, written: [...new Set(written)].sort(), settings: saved.get('site:settings'), local: localStorage.length }
+  })
+  expect(result.opened).toEqual({ theme: 'sepia', index: 1 }) // read from the storage
+  expect(result.written).toEqual(['site:position:book-1', 'site:settings'])
+  expect(JSON.parse(result.settings!)).toEqual({ theme: 'sepia', fontSize: 30 })
+  expect(result.local).toBe(0) // nothing goes to localStorage then
+})
+
 test('EpubReader shows the book opened last, even when an earlier one takes longer to load', async ({ page }) => {
   await page.goto('/app/')
   const titles = await page.evaluate(async () => {
@@ -833,7 +865,7 @@ test('EpubReader shows the book opened last, even when an earlier one takes long
     const root = document.createElement('div')
     root.style.height = '100vh'
     document.body.replaceChildren(root)
-    const reader = new EpubReader(root, { storageKey: '' })
+    const reader = new EpubReader(root, { storage: null })
     const episode = await (await fetch('/samples/episode-1.epub')).blob()
     // The first one has to be fetched; the second is at hand and is ready sooner.
     const books = await Promise.all([reader.open('/samples/nepub.epub'), reader.open(episode)])
