@@ -7,7 +7,7 @@
 - **縦書きの小説**: 縦書きの本は右から左へページが進みます。ルビ・縦中横・傍点に対応し、横書きの本を縦書きで表示することもできます
 - **漫画などの固定レイアウト**: ページを画面に合わせて拡大縮小し、横長の画面では見開き（2 ページ並び）で表示します
 - **ページ送り**: キーボード、クリック・タップ、スワイプ、マウスホイール・トラックパッド。リモコン操作でもページが飛ばないチャタリング対策つき
-- **組み込みやすさ**: フレームワーク非依存で、ランタイム依存はありません（ZIP の展開もブラウザ標準の機能で行います）。ビルド後の大きさは gzip で約 22 KB です
+- **組み込みやすさ**: フレームワーク非依存で、ランタイム依存はありません（ZIP の展開もブラウザ標準の機能で行います）。ビルド後の大きさは、圧縮・最小化なしの状態を gzip して約 24 KB です
 - **安全性**: 書籍の中のスクリプトは動かしません。外部への通信もさせません
 
 ## 3 つの層
@@ -34,7 +34,7 @@ docker compose up
 
 | 操作 | 動作 |
 | --- | --- |
-| ← / → | 左 / 右へページをめくる（右開きの本なら ← が次のページ） |
+| ← / → | 左 / 右へページをめくる（縦書きで表示しているときと、右開きの漫画では ← が次のページ） |
 | ↓ / PageDown / Space | 次のページ |
 | ↑ / PageUp / Shift+Space | 前のページ |
 | ページの左 1/3・右 1/3 をクリック（タップ） | 左 / 右へページをめくる |
@@ -68,7 +68,7 @@ docker compose up
 npm には公開していません。バージョンタグの付いたリビジョンを各自ビルドして使う想定です。次のどちらかで取り込んでください。
 
 - `docker compose run --rm node npm run build` で生成される `dist/src/`（ES Modules + 型定義、依存なし）をプロジェクトにコピーする
-- TypeScript をそのまま扱えるバンドラー（Vite など）なら `src/` をコピーして直接 import する
+- TypeScript をそのまま扱えるバンドラー（Vite など）なら `src/` をコピーして直接 import する（import を `.ts` 拡張子で書いているので、型チェックには `allowImportingTsExtensions` が要る）
 
 ### 表示部分だけ使う（EpubViewer）
 
@@ -80,14 +80,17 @@ npm には公開していません。バージョンタグの付いたリビジ�
   import { EpubViewer, openBook, themes } from './epub-viewer/index.js'
 
   const viewer = new EpubViewer(document.getElementById('viewer'), { theme: themes.dark })
-  const book = await openBook('/books/sample.epub') // URL / File / Blob / ArrayBuffer
-  await viewer.open(book)
-
+  // イベントは open() の前に登録する（最初のページの表示でも relocate が発生する）
   viewer.addEventListener('relocate', (e) => {
     console.log(`全体の ${Math.round(e.detail.fraction * 100)}%`, viewer.location)
   })
+
+  const book = await openBook('/books/sample.epub') // URL / File / Blob / ArrayBuffer
+  await viewer.open(book)
 </script>
 ```
+
+`EpubViewer` は `Book` を破棄しません。別の本に切り替えるときや閉じるときは、前の本の `book.destroy()` を呼んでください（`EpubReader` は自分で破棄します）。
 
 ### 画面ごと使う（EpubReader）
 
@@ -141,16 +144,13 @@ const reader = new EpubReader(document.getElementById('reader'))
 let current = 1
 let loading = false
 
-async function show(episode, atEnd = false) {
+// location を省略すると、保存された位置（なければ先頭）から開く
+async function show(episode, location) {
   if (loading || episode < 1) return
   loading = true
   try {
-    await reader.open(`/books/novel_${episode}.epub`, {
-      // 1 話ごとの EPUB はタイトルが共通なことが多いので、読書位置のキーは話ごとに指定する
-      key: `novel:${episode}`,
-      // 前の話に戻るときは最後のページから表示する（progress: 1 = 最後のページ）
-      location: atEnd ? { index: -1, progress: 1 } : undefined,
-    })
+    // 読書位置のキーは、URL が変わっても同じ話を指すものを自分で決めておくと確実
+    await reader.open(`/books/novel_${episode}.epub`, { key: `novel:${episode}`, location })
     current = episode
   } catch {
     // 次の話がない（最新話）など
@@ -159,9 +159,10 @@ async function show(episode, atEnd = false) {
   }
 }
 
-reader.viewer.addEventListener('bookend', () => show(current + 1))
-reader.viewer.addEventListener('bookstart', () => show(current - 1, true))
-show(1)
+// 次の話は先頭から、前の話は最後のページから表示する（index: -1 = 最後のセクション、progress: 1 = 最後のページ）
+reader.viewer.addEventListener('bookend', () => show(current + 1, { index: 0, progress: 0 }))
+reader.viewer.addEventListener('bookstart', () => show(current - 1, { index: -1, progress: 1 }))
+show(1) // 続きから
 ```
 
 `EpubViewer` だけで同じことをする例が `examples/series.html`（<http://localhost:8080/examples/series.html>）にあります。
@@ -194,7 +195,7 @@ const storage = {
 const reader = new EpubReader(el, { storage, storageKey: 'my-app' })
 ```
 
-読書位置のキーは本の識別子（`dc:identifier`）、なければ URL かファイル名です。1 話ごとの EPUB のように識別子やタイトルが共通の本は、`reader.open(source, { key })` で話ごとのキーを指定してください。
+読書位置のキーは、本の識別子（`dc:identifier`）、なければ URL かファイル名、それもなければタイトルです。次の場合は `reader.open(source, { key })` でキーを指定してください: 識別子が複数の本で共通している（1 話ごとの EPUB など）、URL が毎回変わる（署名付き URL など）、`Blob` や `ArrayBuffer` のように名前のないものから開く。
 
 ### ページスライダー
 
@@ -226,7 +227,7 @@ reader.viewer.addEventListener('tap', () => {
 
 ### 章へのリンクから開く
 
-`book.toc` の `href`（`"text/3.xhtml"` や `"OEBPS/ch2.xhtml#sec1"` のようなアーカイブ内パス）はそのまま `open()` / `goTo()` に渡せます。
+`book.toc` の `href`（`"src/text/3.xhtml"` や `"OEBPS/ch2.xhtml#sec1"` のようなアーカイブ内パス）はそのまま `open()` / `goTo()` に渡せます。リンクのない見出しだけの項目は `href` が空です。
 
 ```js
 await viewer.open(book, book.toc[2].href)
@@ -255,8 +256,11 @@ viewer.addEventListener('link', (e) => {
 
 // ユーザーの操作での移動が失敗した（壊れたセクションなど）ときの通知
 viewer.addEventListener('error', (e) => showMessage(`表示できませんでした: ${e.detail.error}`))
+```
 
-// 操作をアプリ側で決める: キーとクリックでのページ送りを切り、自分で呼ぶ
+操作をアプリ側で決めたい場合は、キーやクリックでのページ送りを切って、自分で呼びます。
+
+```js
 const viewer = new EpubViewer(el, { keyboard: false, click: false })
 myKeymap.on('j', () => viewer.next())
 viewer.addEventListener('tap', (e) => (e.detail.x < 0.5 ? viewer.goLeft() : viewer.goRight()))
@@ -275,8 +279,8 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | `metadata` | `{ identifier, title, creator, language, layout, direction }`。`identifier` は本によっては空。`layout` は `'reflowable'` か `'pre-paginated'`（固定レイアウト）、`direction` はページの進む向き（`'rtl'` = 右開き / `'ltr'`） |
 | `sections` | 読む順のセクション一覧 `{ href, linear, size, spread? }[]`。`linear: false` はページ送りで飛ばされる。固定レイアウトでは 1 セクションが 1 ページで、`spread` は見開きでの位置（`'left'` / `'right'` / `'center'`、本に指定があるときだけ） |
 | `toc` | 目次 `{ label, href, children }[]`（EPUB 3 の nav、なければ EPUB 2 の NCX） |
-| `loadCover()` | 表紙画像の `Blob`（なければ `undefined`）。本棚のサムネイルなどに |
-| `getUrl(path)` | アーカイブ内ファイルの blob: URL |
+| `loadCover()` | 表紙画像の `Blob`（なければ `undefined`）を `Promise` で返す。本棚のサムネイルなどに |
+| `getUrl(path)` | アーカイブ内ファイルの blob: URL を `Promise` で返す |
 | `destroy()` | 作成した blob: URL を解放する。本を閉じるときに呼ぶ |
 
 ### `new EpubViewer(container, options?)`
@@ -301,18 +305,18 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 
 | オプション | 既定値 | 説明 |
 | --- | --- | --- |
-| `keyboard` | `true` | ホストのウィンドウで ← → ↑ ↓ PageUp PageDown Space を受け付ける。入力欄にフォーカスがあるときは反応しない。スクロールするページに埋め込む場合、これらのキーはページのスクロールに使われなくなる |
-| `click` | `true` | ページの左 1/3・右 1/3（と、幅を制限したときの左右の余白）のクリック・タップでページをめくる。`false` にすると、リンク以外のクリックはすべて `tap` イベントになる。書籍内のリンクはどちらでも働く |
+| `keyboard` | `true` | ホストのウィンドウで ← → ↑ ↓ PageUp PageDown Space を受け付ける。入力欄にフォーカスがあるときと、先に `preventDefault()` されたキーには反応しない。ウィンドウ全体で受けるので、1 ページに複数のビューアを置くとすべてがめくれる。スクロールするページに埋め込む場合、これらのキーはページのスクロールに使われなくなる |
+| `click` | `true` | ページの左 1/3・右 1/3（と、幅を制限したときの左右の余白）のクリック・タップでページをめくる。`false` にすると、ページ上のリンク以外のクリックはすべて `tap` イベントになる（余白のクリックは何もしない）。書籍内のリンクはどちらでも働く |
 | `wheel` | `true` | ビューアの上でのマウスホイール・トラックパッドでページをめくる（1 回の操作で 1 ページ）。ビューア上ではページのスクロールに使われなくなる。Ctrl＋ホイール（拡大縮小）は妨げない |
 | `swipe` | `true` | タッチ画面での左右のスワイプでページをめくる。ブラウザのタッチ操作（ページのスクロール、ピンチでの拡大、拡大中の移動）は妨げず、拡大表示中・文字の選択中・2 本指・縦方向の動きではめくらない |
 | `cooldown` | `100` | これらの入力を、直前のページ送りからこのミリ秒以内なら無視する（リモコンのチャタリング対策） |
 
 | メソッド・プロパティ | 説明 |
 | --- | --- |
-| `open(book, location?)` | 本を表示する。`location` は `BookLocation`（`{ index, progress }`）か目次の `href`。省略時は先頭 |
-| `goTo(target)` | 移動する。`target` は `BookLocation`、目次の `href`、または `{ fraction }`（本全体の中での位置 0〜1） |
-| `next()` / `prev()` | 次 / 前のページ（セクションの境界もまたぐ） |
-| `goLeft()` / `goRight()` | 左 / 右へめくる（右開きの本なら `goLeft()` が次のページ） |
+| `open(book, location?)` | 本を表示する。`location` は `BookLocation`（`{ index, progress }`）か目次の `href`。省略時と、その位置が本にないときは先頭。前に表示していた `Book` は破棄しない |
+| `goTo(target)` | 移動する。`target` は `BookLocation`、目次の `href`、または `{ fraction }`（本全体の中での位置 0〜1）。その位置が本にないときは何もしない |
+| `next()` / `prev()` | 次 / 前のページ（セクションの境界もまたぐ）。前の移動（ページの読み込み）が終わるまでと、本を開く前は何もしない |
+| `goLeft()` / `goRight()` | 左 / 右へめくる（縦書きで表示しているときと、右開きの固定レイアウトでは `goLeft()` が次のページ） |
 | `setOptions(options)` | オプションを変更して再レイアウトする。ページ先頭にあった文章のあるページを表示し続ける |
 | `location` | 現在位置 `{ index, progress }`（未表示なら `undefined`） |
 | `options` | 現在のオプション |
@@ -321,19 +325,21 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 
 | イベント | `detail` | 発生するとき |
 | --- | --- | --- |
-| `relocate` | `{ index, progress, page, pages, fraction, indices }` | 表示ページが変わった。`page` / `pages` はセクション内のページ番号（0 始まり）とページ数、`fraction` は本全体の中での位置（最後のページで 1）、`indices` は表示中のセクション（見開きなら 2 つ。`index` はその先頭） |
+| `relocate` | `{ index, progress, page, pages, fraction, indices }` | 表示ページが変わった、または再レイアウトされた（オプションの変更やコンテナの大きさの変化でページ数が変わる）。`page` / `pages` はセクション内のページ番号（0 始まり）とページ数、`fraction` は本全体の中での位置（最後のページで 1）、`indices` は表示中のセクション（見開きなら 2 つ。`index` はその先頭） |
 | `bookend` | – | 最後のページで `next()` した |
 | `bookstart` | – | 最初のページで `prev()` した |
-| `sectionload` | `{ index, doc }` | セクションの文書を読み込んだ（レイアウト前） |
+| `sectionload` | `{ index, doc }` | セクションの文書を読み込んだ（レイアウト前）。同じセクションでも、表示し直すたびに発生する |
 | `tap` | `{ x }` | リンクでもページ送りでもないクリック・タップ（ページの中央 1/3。`click: false` のときはページ全体）。`x` はページ上の横位置（左端 0 〜 右端 1） |
 | `link` | `{ href }` | 外部リンク（`http:` / `https:` / `mailto:`）がクリックされた（キャンセル可能）。それ以外の URL（`javascript:` など）は開かない |
 | `error` | `{ error }` | ユーザーの操作（ページ送り、書籍内のリンク、`EpubReader` の目次）での移動に失敗した（壊れたセクションなど）。表示は元のページのまま。コードから呼んだ `next()` などは代わりに Promise が reject される |
 
-TypeScript では `addEventListener` の `e.detail` に型が付きます。
+`open()` / `goTo()` / `next()` / `prev()` / `goLeft()` / `goRight()` は、表示が終わると解決する `Promise` を返します。TypeScript では `addEventListener` の `e.detail` に型が付きます。
 
 ### `new EpubReader(root, options?)`
 
-ツールバー（目次・進捗・表示設定メニュー）と本文をまとめた画面です。ツールバーはテーマの色に合わせて表示されます。`root` には高さを与えてください。
+ツールバー（目次・進捗・表示設定メニュー）と本文をまとめた画面です。ツールバーはテーマの色に合わせて表示されます。`root` には高さを与えてください。`root` の中身は置き換えられ、`epub-reader` クラスが付きます。
+
+ツールバーの文言は日本語で、テーマは下の 4 種類、文字サイズは 12〜120px の範囲です。これらを変えたい場合や、画面の構成そのものを変えたい場合は、`EpubViewer` の上に自分の画面を作ってください（`EpubReader` は `EpubViewer` の公開 API だけで作られています）。
 
 | オプション | 既定値 | 説明 |
 | --- | --- | --- |
@@ -351,6 +357,10 @@ TypeScript では `addEventListener` の `e.detail` に型が付きます。
 | `viewer` | 内部の `EpubViewer`。イベントやページ移動に使う |
 | `book` | 表示中の `Book` |
 | `destroy()` | 画面を破棄する（表示中の `Book` も破棄する） |
+
+### 型
+
+TypeScript 用に次の型も export しています: `BookSource`（`openBook()` に渡せるもの）、`Metadata`、`Section`、`TocItem`、`Theme`、`ViewerOptions`、`BookLocation`、`RelocateDetail`、`EpubViewerEventMap`、`ReaderOptions`、`ReaderSettings`、`OpenOptions`。
 
 ## 対応範囲と制限
 
