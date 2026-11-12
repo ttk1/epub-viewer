@@ -130,6 +130,13 @@ test.describe('nepub-style EPUB (vertical)', () => {
     await expect(page.locator('.toc summary')).toBeFocused()
   })
 
+  test('shows the setting for spreads only where it does something: not for vertical text', async ({ page }) => {
+    await openSettings(page)
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '表示方向', 'テーマ'])
+    await setting(page, 'writingMode', 'horizontal')
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '表示方向', '見開き', 'テーマ'])
+  })
+
   test('a click on the page closes an open menu, without turning the page', async ({ page }) => {
     await openSettings(page)
     const box = (await page.locator('iframe').boundingBox())!

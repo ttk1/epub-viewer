@@ -68,7 +68,8 @@ const swatch = ({ background, color }: Theme) => `background:${background};color
 
 // The two menus are <details>, so they open and close without any code. The settings are in a
 // <form> to keep the radio button groups of several readers on one page apart. Settings that only
-// work for one kind of book (reflowable text, or fixed-layout pages) are shown for that kind only.
+// work for one kind of book (reflowable text, or fixed-layout pages) are shown for that kind only,
+// and the spread not for vertical text.
 const TOOLBAR = `
   <details class="toc" hidden>
     <summary>目次</summary>
@@ -93,7 +94,9 @@ const TOOLBAR = `
         ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
         ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       </div>
-      ${choices('spread', '見開き', [['auto', '自動'], ['always', 'する'], ['never', 'しない']])}
+      <div class="not-vertical">
+        ${choices('spread', '見開き', [['auto', '自動'], ['always', 'する'], ['never', 'しない']])}
+      </div>
       <div class="only-pre-paginated">
         ${choices('direction', '開き方向', [['auto', '本の指定'], ['rtl', '右開き'], ['ltr', '左開き']])}
       </div>
@@ -120,8 +123,8 @@ const STYLE = `
     background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif;
   }
   .epub-reader .toolbar {
-    position: relative; z-index: 1; display: flex; gap: 2px; align-items: center;
-    padding: 4px 8px; border-bottom: 1px solid var(--line);
+    position: relative; z-index: 1; display: flex; gap: 4px; align-items: center;
+    padding: 6px 10px; border-bottom: 1px solid var(--line);
   }
   .epub-reader .toolbar[hidden] { display: none; } /* the app may hide it, e.g. on a tap */
   /* Progress through the book, drawn over the border. */
@@ -130,8 +133,9 @@ const STYLE = `
     background: var(--fg); opacity: 0.5; transition: width 0.2s;
   }
   .epub-reader :is(.toolbar > :is(button, select, a, label), summary, .panel button) {
-    box-sizing: border-box; padding: 6px 10px; border: 0; border-radius: 6px;
+    box-sizing: border-box; padding: 6px 10px; border: 0; border-radius: 8px;
     background: none; color: inherit; font: inherit; text-decoration: none; white-space: nowrap; cursor: pointer;
+    transition: background-color 0.15s;
   }
   .epub-reader :is(.toolbar > :is(button, select, a, label), summary, .panel button):hover,
   .epub-reader .choices label:hover > span,
@@ -145,7 +149,7 @@ const STYLE = `
   .epub-reader .toolbar > span:empty { padding: 0; }
   .epub-reader .title {
     flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    text-align: center; font-weight: 600;
+    text-align: center; font-weight: 600; letter-spacing: 0.02em;
   }
   .epub-reader .progress { opacity: 0.7; font-variant-numeric: tabular-nums; }
   /* On a narrow screen the room goes to the title; the bar under the toolbar shows the same. */
@@ -153,25 +157,38 @@ const STYLE = `
   .epub-reader .panel {
     position: absolute; top: calc(100% + 6px); box-sizing: border-box;
     width: min(26em, 100% - 16px); max-height: 70vh; max-height: calc(100cqh - 100% - 14px); overflow: auto;
-    padding: 6px; border: 1px solid var(--line); border-radius: 10px;
-    background: var(--bg); box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
+    padding: 6px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--bg); box-shadow: 0 2px 6px rgb(0 0 0 / 0.12), 0 12px 32px rgb(0 0 0 / 0.18);
   }
+  /* A menu comes in with a small move, unless the reader has asked for less motion. */
+  @keyframes epub-reader-menu { from { opacity: 0; transform: translateY(-4px); } }
+  .epub-reader details[open] > .panel { animation: epub-reader-menu 0.12s ease-out; }
+  @media (prefers-reduced-motion: reduce) { .epub-reader details[open] > .panel { animation: none; } }
   .epub-reader .toc .panel { left: 8px; }
-  .epub-reader .settings .panel { right: 8px; display: grid; gap: 12px; width: min(32em, 100% - 16px); padding: 14px; }
+  .epub-reader .settings .panel { right: 8px; display: grid; gap: 14px; width: min(34em, 100% - 16px); padding: 16px; }
   .epub-reader .toc-list button {
     display: block; width: 100%; padding-left: calc(10px + var(--depth) * 1em); text-align: start; white-space: normal;
   }
-  .epub-reader .toc-list [aria-current] { background: var(--hover); font-weight: 600; }
+  .epub-reader .toc-list button:disabled { opacity: 0.6; cursor: default; background: none; } /* a heading that leads nowhere */
+  /* The chapter being read: marked by a bar at its side as well. */
+  .epub-reader .toc-list [aria-current] { background: var(--hover); font-weight: 600; box-shadow: inset 3px 0 var(--fg); }
   /* The groups of rows for one kind of book do not make a box of their own. */
-  .epub-reader :is(.only-reflowable, .only-pre-paginated) { display: contents; }
+  .epub-reader :is(.only-reflowable, .only-pre-paginated, .not-vertical) { display: contents; }
   .epub-reader[data-layout='pre-paginated'] .only-reflowable,
-  .epub-reader[data-layout='reflowable'] .only-pre-paginated { display: none; }
+  .epub-reader[data-layout='reflowable'] .only-pre-paginated,
+  .epub-reader[data-writing='vertical'] .not-vertical { display: none; }
   .epub-reader .row { display: grid; grid-template-columns: 5.5em 1fr; align-items: center; }
   .epub-reader .row > :first-child { opacity: 0.7; }
-  .epub-reader .choices { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .epub-reader .choices { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
   .epub-reader .choices label { position: relative; display: flex; }
-  .epub-reader .choices :is(label > span, button) { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
-  .epub-reader .choices :checked + span { border-color: var(--fg); box-shadow: 0 0 0 1px var(--fg); }
+  .epub-reader .choices :is(label > span, button) {
+    padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+  /* The choice made: in the colors of the page, the other way round. */
+  .epub-reader .choices input:checked + span { border-color: var(--fg); background-color: var(--fg); color: var(--bg); }
+  /* A theme is shown in its own colors, so the one chosen has a ring around it instead. */
+  .epub-reader .choices input:checked + span[style*='background'] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--fg); }
   /* The radio button itself is invisible and covers its label. */
   .epub-reader .choices input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
   .epub-reader .font-size { min-width: 2.5em; text-align: center; font-variant-numeric: tabular-nums; }
@@ -198,6 +215,8 @@ export class EpubReader {
   #positionKey = ''
   /** The latest call of open(). */
   #opening?: Promise<Book>
+  /** The document of the section shown (of a fixed-layout book: of one of its pages). */
+  #page?: Document
   /** The section whose entry is marked in the table of contents. */
   #marked = -1
   /**
@@ -240,7 +259,11 @@ export class EpubReader {
       root.style.setProperty('--progress', String(fraction))
       this.#markCurrent(index)
       this.#save(`position:${this.#positionKey}`, this.viewer.location)
+      // For the settings shown: a spread does nothing for vertical text, whose page is as wide as the screen already.
+      const vertical = !fixed && this.#page?.defaultView?.getComputedStyle(this.#page.documentElement).writingMode.startsWith('vertical')
+      root.dataset.writing = vertical ? 'vertical' : 'horizontal'
     })
+    this.viewer.addEventListener('sectionload', (e) => (this.#page = e.detail.doc))
     this.toolbar.addEventListener('click', this.#onClick)
     this.toolbar.addEventListener('change', this.#onChange)
     // On the document: after a click that opens a menu, the focus is not in the toolbar. The
@@ -327,6 +350,7 @@ export class EpubReader {
     this.#root.classList.remove('epub-reader', 'menu-open')
     for (const property of ['--bg', '--fg', '--progress', 'color-scheme']) this.#root.style.removeProperty(property)
     delete this.#root.dataset.layout
+    delete this.#root.dataset.writing
   }
 
   #part<T extends HTMLElement = HTMLElement>(name: string): T {
