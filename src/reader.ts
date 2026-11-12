@@ -8,9 +8,13 @@ export interface ReaderSettings {
   /** "book" keeps the book's own fonts. */
   font: 'mincho' | 'gothic' | 'book'
   fontSize: number
+  /** Line height as a multiple of the font size. */
+  lineHeight: number
   /** Page width in px, 0 = full width. */
   maxWidth: number
   writingMode: ViewerOptions['writingMode']
+  /** Two pages (fixed layout) or two columns (horizontal text) side by side. */
+  spread: ViewerOptions['spread']
 }
 
 export interface ReaderOptions {
@@ -36,8 +40,10 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   theme: 'system',
   font: 'mincho',
   fontSize: 45, // large enough to read comfortably at a distance
+  lineHeight: 1.6,
   maxWidth: 0,
   writingMode: 'auto',
+  spread: 'auto',
 }
 
 /** A row of the settings panel: radio buttons named after the setting, one per value. */
@@ -71,8 +77,10 @@ const TOOLBAR = `
         </span>
       </div>
       ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
+      ${choices('lineHeight', '行間', [[1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
       ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
       ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
+      ${choices('spread', '見開き', [['auto', '自動'], ['always', 'する'], ['never', 'しない']])}
       ${choices('theme', 'テーマ', [
         ['system', '自動'],
         ['light', 'ライト', swatch(themes.light)],
@@ -286,8 +294,10 @@ export class EpubReader {
       theme,
       fontFamily: settings.font === 'book' ? '' : fonts[settings.font],
       fontSize: settings.fontSize,
+      lineHeight: settings.lineHeight,
       maxWidth: settings.maxWidth,
       writingMode: settings.writingMode,
+      spread: settings.spread,
     })
   }
 
