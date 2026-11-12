@@ -38,10 +38,14 @@ export interface ViewerOptions {
   maxWidth: number
   /** Turn pages with ←/→, ↑/↓, PageUp/PageDown and Space pressed anywhere in the host window. */
   keyboard: boolean
+  /** Turn pages with clicks / taps on the left and right thirds of the page. Links in the book work either way. */
+  click: boolean
   /** Turn pages with the mouse wheel / trackpad over the viewer: one page per wheel gesture. */
   wheel: boolean
+  /** Turn pages with sideways swipes on touch screens. */
+  swipe: boolean
   /**
-   * Page-turn keys, clicks and wheel gestures within this many ms of the previous accepted one are ignored, so that
+   * Page-turn keys, clicks, wheel gestures and swipes within this many ms of the previous accepted one are ignored, so that
    * chattering (e.g. remote controls) does not skip pages. Keep it short so fast deliberate presses still work.
    */
   cooldown: number
@@ -75,7 +79,7 @@ export interface EpubViewerEventMap {
   sectionload: CustomEvent<{ index: number; doc: Document }>
   /** An external http(s): / mailto: link was clicked. Call preventDefault() to stop it from opening in a new tab. */
   link: CustomEvent<{ href: string }>
-  /** A page turn by key, click or wheel failed (e.g. a broken section). Calls from code reject instead. */
+  /** A page turn by key, click, wheel or swipe, or a link in the book, failed (e.g. a broken section). Calls from code reject instead. */
   error: CustomEvent<{ error: unknown }>
 }
 
@@ -103,7 +107,9 @@ const DEFAULTS: ViewerOptions = {
   margin: 32,
   maxWidth: 0,
   keyboard: true,
+  click: true,
   wheel: true,
+  swipe: true,
   cooldown: 100,
 }
 
@@ -111,6 +117,10 @@ const DEFAULTS: ViewerOptions = {
 const WHEEL_GESTURE_GAP = 150
 /** Scroll distance in px within one gesture that turns a page, so that a resting finger on a trackpad does not. */
 const WHEEL_THRESHOLD = 10
+/** Finger travel in px that makes a touch a swipe rather than a tap. */
+const SWIPE_DISTANCE = 40
+/** A swipe travels at least this many times further sideways than vertically; steeper touches are scrolling. */
+const SWIPE_SLOPE = 1.5
 
 /**
  * Paginated EPUB renderer. Each section is shown in an iframe (scripts disabled) and split into
@@ -118,7 +128,7 @@ const WHEEL_THRESHOLD = 10
  * turn is a vertical scroll; for horizontal text it is a horizontal scroll.
  */
 export class EpubViewer extends EventTarget {
-  book?: Book
+  #book?: Book
   readonly #container: HTMLElement
   readonly #iframe: HTMLIFrameElement
   readonly #options: ViewerOptions = { ...DEFAULTS }
@@ -133,13 +143,23 @@ export class EpubViewer extends EventTarget {
   #pages = 1
   /** Page size along the scroll axis, in px. */
   #pageSize = 0
-  /** Incremented on every navigation, so that stale async loads can be discarded. */
+  // Navigations (see #display) overlap, as they wait for files to load.
+  /** Incremented when a navigation begins to change the page: an older one that is still loading gives up. */
   #token = 0
+  /** Incremented when a navigation starts, to tell whether it is the latest one when it ends. */
+  #navigation = 0
+  /** The latest navigation is under way: page turns by the user are ignored meanwhile. */
   #busy = false
   readonly #pressedKeys = new Set<string>()
   #lastInputTurn = -Infinity
   /** Current wheel gesture: scroll distance so far, whether it has turned a page, and its last event time. */
   #wheel = { x: 0, y: 0, turned: false, last: -Infinity }
+  /** The text that the page began with before the re-layouts since the last navigation. */
+  #anchor?: Range
+  /** Whether text was selected when the pointer was last pressed. */
+  #selectedAtPress = false
+  /** Where the current one-finger touch began. */
+  #touchStart?: { x: number; y: number }
 
   /** `container` must have a size (e.g. width/height set by CSS); the viewer fills it. */
   constructor(container: HTMLElement, options: Partial<ViewerOptions> = {}) {
@@ -151,12 +171,18 @@ export class EpubViewer extends EventTarget {
     // scripts are still blocked by the CSP that Book inserts into every document.
     this.#iframe.sandbox.add('allow-same-origin', 'allow-scripts')
     this.#iframe.style.cssText = 'display:block;width:100%;height:100%;margin:0 auto;border:0'
+    container.style.touchAction = 'manipulation' // as for the page: see #layout
     container.append(this.#iframe)
     container.addEventListener('click', this.#onSideClick)
-    container.addEventListener('wheel', this.#onWheel, { passive: false })
+    this.#listenGestures(container, 'addEventListener')
     this.setOptions(options)
     this.#resizeObserver.observe(container)
     this.#listenKeys(this.#window, 'addEventListener')
+  }
+
+  /** The book being shown. */
+  get book(): Book | undefined {
+    return this.#book
   }
 
   get options(): Readonly<ViewerOptions> {
@@ -170,18 +196,22 @@ export class EpubViewer extends EventTarget {
 
   /** Shows `book` at `location` (a Location or a TocItem href), or at the beginning. */
   async open(book: Book, location?: Location | string): Promise<void> {
-    this.book = book
+    this.#book = book
     this.#index = -1
-    await this.goTo(location ?? { index: Math.max(0, book.sections.findIndex((s) => s.linear)), progress: 0 })
+    this.#iframe.title = book.metadata.title // names the frame for screen readers
+    const start = { index: Math.max(0, book.sections.findIndex((s) => s.linear)), progress: 0 }
+    await this.goTo(location ?? start)
+    // A location that is not in this book, e.g. one saved for an older edition: don't leave the page empty.
+    if (this.#index < 0) await this.goTo(start)
   }
 
   async goTo(target: Location | string): Promise<void> {
     if (typeof target !== 'string') {
-      const index = target.index < 0 ? (this.book?.sections.length ?? 0) + target.index : target.index
+      const index = target.index < 0 ? (this.#book?.sections.length ?? 0) + target.index : target.index
       return this.#display(index, { progress: target.progress })
     }
     const [path, fragment] = target.split('#')
-    const index = this.book?.sections.findIndex((s) => s.href === path) ?? -1
+    const index = this.#book?.sections.findIndex((s) => s.href === path) ?? -1
     if (index >= 0) await this.#display(index, { fragment })
   }
 
@@ -211,12 +241,27 @@ export class EpubViewer extends EventTarget {
   }
 
   destroy(): void {
+    // Stops navigations under way, and makes later calls (setOptions, next, ...) do nothing.
     this.#token++
+    this.#book = undefined
+    this.#index = -1
     this.#resizeObserver.disconnect()
     this.#listenKeys(this.#window, 'removeEventListener')
     this.#container.removeEventListener('click', this.#onSideClick)
-    this.#container.removeEventListener('wheel', this.#onWheel)
+    this.#listenGestures(this.#container, 'removeEventListener')
     this.#iframe.remove()
+  }
+
+  /**
+   * Wheel and touch handling for the container (the empty sides of a width-limited page) or a
+   * section document: events over the page stay in the iframe; they don't reach the container.
+   */
+  #listenGestures(target: HTMLElement | Document, method: 'addEventListener' | 'removeEventListener'): void {
+    target[method]('wheel', this.#onWheel as EventListener, { passive: false })
+    // Passive: swipes are only watched, so that the browser's own touch gestures keep working.
+    target[method]('touchstart', this.#onTouchStart as EventListener, { passive: true })
+    target[method]('touchend', this.#onTouchEnd as EventListener)
+    target[method]('touchcancel', this.#onTouchEnd as EventListener)
   }
 
   /** Key handling for a window: the host page's, or a section document's (keys there don't reach the host). */
@@ -239,7 +284,7 @@ export class EpubViewer extends EventTarget {
   }
 
   async #turn(step: 1 | -1): Promise<void> {
-    const sections = this.book?.sections
+    const sections = this.#book?.sections
     if (!sections || this.#busy || this.#index < 0) return
     const page = this.#page + step
     if (page >= 0 && page < this.#pages) return this.#showPage(page)
@@ -250,25 +295,32 @@ export class EpubViewer extends EventTarget {
   }
 
   async #display(index: number, { progress = 0, fragment }: { progress?: number; fragment?: string }): Promise<void> {
-    const section = this.book?.sections[index]
+    const book = this.#book
+    const section = book?.sections[index]
     if (!section) return
-    const token = ++this.#token
+    const navigation = ++this.#navigation
     this.#busy = true
     try {
-      if (index !== this.#index) {
-        const url = await this.book!.getUrl(section.href) // may throw; the current page stays usable
-        if (token !== this.#token) return // superseded by a newer navigation
+      // First, while nothing has changed yet: if this throws, the current page, or another
+      // navigation that is under way, stays as it is.
+      const url = index === this.#index ? undefined : await book!.getUrl(section.href)
+      if (book !== this.#book) return // another book was opened, or the viewer destroyed, meanwhile
+      const token = ++this.#token
+      if (url) {
         this.#index = -1
         const doc = await this.#load(url)
-        if (token !== this.#token) return
+        if (token !== this.#token) return // superseded by a newer navigation
         this.#index = index
         this.#setup(doc)
       }
       this.#layout()
-      this.#showPage(fragment ? this.#pageOf(fragment) : Math.round(progress * this.#pages))
+      const target = fragment && this.#iframe.contentDocument!.getElementById(fragment)
+      this.#showPage(target ? this.#pageOf(target) : Math.round(progress * this.#pages))
       this.#iframe.style.visibility = ''
     } finally {
-      if (token === this.#token) this.#busy = false
+      // Only the latest one: a navigation that never finishes (a file that cannot be read to its
+      // end) must not block page turns for good, once a later navigation has shown a page.
+      if (navigation === this.#navigation) this.#busy = false
     }
   }
 
@@ -293,9 +345,12 @@ export class EpubViewer extends EventTarget {
     this.#style = doc.createElement('style')
     ;(doc.head ?? doc.documentElement).append(this.#style)
     this.#listenKeys(doc.defaultView!, 'addEventListener')
-    doc.addEventListener('click', this.#onClick)
-    // Wheel events over the page stay in the iframe; they don't reach the container.
-    doc.addEventListener('wheel', this.#onWheel, { passive: false })
+    // On the root element, not the document: Safari on iOS only turns a tap into a click when an
+    // element, rather than the document, listens for clicks.
+    doc.documentElement.addEventListener('click', this.#onClick)
+    this.#listenGestures(doc, 'addEventListener')
+    doc.addEventListener('scroll', this.#onScroll)
+    doc.addEventListener('pointerdown', this.#onPointerDown)
     this.dispatchEvent(new CustomEvent('sectionload', { detail: { index: this.#index, doc } }))
   }
 
@@ -328,6 +383,9 @@ export class EpubViewer extends EventTarget {
         column-gap: ${2 * m}px !important;
         column-fill: auto !important;
         overflow: hidden !important;
+        /* Quick taps on the side of the page turn pages; they must not zoom in as double taps.
+           Panning and pinch zoom stay as they are. */
+        touch-action: manipulation !important;
         font-size: ${fontSize}px !important;
         color: ${theme.color} !important;
         /* Not transparent: browsers paint an opaque (white) backdrop behind an iframe whose
@@ -354,43 +412,92 @@ export class EpubViewer extends EventTarget {
   }
 
   #relayout(): void {
-    if (this.#busy || this.#index < 0) return
+    if (this.#index < 0) return // nothing is shown, or a section is loading
+    // Kept through a series of re-layouts (font size up, up, down, ...), so that they don't drift.
+    const anchor = this.#anchor ?? this.#firstText()
     const progress = this.#page / this.#pages
     this.#layout()
-    this.#showPage(Math.round(progress * this.#pages))
+    this.#showPage(anchor ? this.#pageOf(anchor) : Math.round(progress * this.#pages))
+    this.#anchor = anchor
+  }
+
+  /** The first character of the current page: what the reader is at, to be found again after a re-layout. */
+  #firstText(): Range | undefined {
+    const doc = this.#iframe.contentDocument!
+    const range = doc.createRange()
+    // Pages follow each other along the scroll axis, so text on earlier pages ends before 0.
+    // Text that is not rendered (e.g. collapsed white space) has an empty box.
+    const reaches = (node: Text, end: number): boolean => {
+      range.setStart(node, 0)
+      range.setEnd(node, end)
+      const rect = range.getBoundingClientRect()
+      return (rect.width > 0 || rect.height > 0) && (this.#vertical ? rect.bottom : rect.right) > 0
+    }
+    const walker = doc.createTreeWalker(doc.body ?? doc.documentElement, NodeFilter.SHOW_TEXT)
+    for (let node; (node = walker.nextNode() as Text | null); ) {
+      if (!reaches(node, node.length)) continue
+      // Binary search for the first character that reaches the page (a paragraph may begin on an earlier page).
+      let [low, high] = [0, node.length - 1]
+      while (low < high) {
+        const middle = (low + high) >> 1
+        if (reaches(node, middle + 1)) high = middle
+        else low = middle + 1
+      }
+      range.setStart(node, low)
+      range.setEnd(node, low + 1)
+      // Text that begins on a later page: the current one has none (e.g. a page with only an image).
+      const rect = range.getBoundingClientRect()
+      return (this.#vertical ? rect.top : rect.left) < this.#pageSize ? range : undefined
+    }
+    return undefined
   }
 
   #showPage(page: number): void {
     const doc = this.#iframe.contentDocument!
-    this.#page = Math.min(Math.max(page, 0), this.#pages - 1)
-    const offset = this.#page * this.#pageSize
+    const offset = Math.min(Math.max(page, 0), this.#pages - 1) * this.#pageSize
     doc.scrollingElement!.scrollTo(this.#vertical ? 0 : offset, this.#vertical ? offset : 0)
+    this.#setPage(offset / this.#pageSize)
+  }
 
-    const sizes = this.book!.sections.map((s) => s.size)
+  /**
+   * The browser scrolls the page by itself for find in page, for the focus moving to a link, and
+   * for a selection dragged over the edge. Its position is left alone, as what it shows must stay
+   * visible; the page number follows, so that the next page turn continues from there.
+   */
+  #onScroll = (): void => {
+    if (this.#index < 0) return
+    const scroller = this.#iframe.contentDocument!.scrollingElement!
+    const page = Math.round((this.#vertical ? scroller.scrollTop : scroller.scrollLeft) / this.#pageSize)
+    if (page !== this.#page && page < this.#pages) this.#setPage(page)
+  }
+
+  #setPage(page: number): void {
+    this.#anchor = undefined
+    this.#page = page
+    const sizes = this.#book!.sections.map((s) => s.size)
     const total = sizes.reduce((a, b) => a + b, 0) || 1
     const before = sizes.slice(0, this.#index).reduce((a, b) => a + b, 0)
     const detail: RelocateDetail = {
       ...this.location!,
-      page: this.#page,
+      page,
       pages: this.#pages,
-      fraction: (before + (sizes[this.#index] * (this.#page + 1)) / this.#pages) / total,
+      fraction: (before + (sizes[this.#index] * (page + 1)) / this.#pages) / total,
     }
     this.dispatchEvent(new CustomEvent('relocate', { detail }))
   }
 
-  #pageOf(id: string): number {
-    const doc = this.#iframe.contentDocument!
-    const el = doc.getElementById(id)
-    if (!el) return 0
-    const rect = el.getBoundingClientRect()
-    const scroller = doc.scrollingElement!
+  #pageOf(target: Element | Range): number {
+    const rect = target.getBoundingClientRect()
+    const scroller = this.#iframe.contentDocument!.scrollingElement!
     const offset = this.#vertical ? rect.top + scroller.scrollTop : rect.left + scroller.scrollLeft
     return Math.floor(offset / this.#pageSize)
   }
 
   #onKeydown = (e: KeyboardEvent): void => {
     if (!this.#options.keyboard || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return
-    if ((e.target as Element).closest?.('input, textarea, select, [contenteditable]')) return
+    const target = e.target as Element
+    if (target.closest?.('input, textarea, select, [contenteditable]')) return
+    if (e.key === ' ' && target.closest?.('button, summary')) return // Space presses the focused button
     const actions: Record<string, () => Promise<void>> = {
       ArrowLeft: this.goLeft,
       ArrowRight: this.goRight,
@@ -424,26 +531,75 @@ export class EpubViewer extends EventTarget {
     const now = performance.now()
     if (now - this.#lastInputTurn < this.#options.cooldown) return
     this.#lastInputTurn = now
-    action.call(this).catch((error: unknown) => this.dispatchEvent(new CustomEvent('error', { detail: { error } })))
+    action.call(this).catch(this.#reportError)
+  }
+
+  /** Navigation started by the user has no caller to reject to. */
+  #reportError = (error: unknown): void => {
+    this.dispatchEvent(new CustomEvent('error', { detail: { error } }))
   }
 
   /** Clicks inside the page: follow links, or turn pages when the left/right third is clicked. */
   #onClick = (e: MouseEvent): void => {
-    const link = (e.target as Element).closest?.('a[href]')
-    if (link) {
+    // Every kind of link (also <area>, and <a xlink:href> in SVG), so that none navigates the iframe itself.
+    const link = (e.target as Element).closest?.('a, area')
+    const href = link?.getAttribute('href') ?? link?.getAttribute('xlink:href')
+    if (href != null) {
       e.preventDefault()
-      this.#followLink(link.getAttribute('href')!)
+      this.#followLink(href)
       return
     }
-    if (!this.#iframe.contentDocument?.getSelection()?.isCollapsed) return
+    if (!this.#options.click || this.#selecting) return
     const x = e.clientX / this.#iframe.clientWidth
     if (x < 1 / 3) this.#inputTurn(this.goLeft)
     else if (x > 2 / 3) this.#inputTurn(this.goRight)
   }
 
+  /**
+   * Text is selected in the page, or was when the pointer was pressed: neither the click or swipe
+   * that selects text, nor the one that only clears the selection, must turn the page.
+   */
+  get #selecting(): boolean {
+    return this.#selectedAtPress || this.#hasSelection
+  }
+
+  get #hasSelection(): boolean {
+    return this.#iframe.contentDocument?.getSelection()?.isCollapsed === false
+  }
+
+  /** Before the browser clears the selection for the press. */
+  #onPointerDown = (): void => {
+    this.#selectedAtPress = this.#hasSelection
+  }
+
+  #onTouchStart = (e: TouchEvent): void => {
+    // A swipe is made with one finger; a second one makes it a pinch.
+    const [touch, second] = e.touches
+    // Screen coordinates: the page moves under the finger while the host page scrolls, so in the
+    // coordinates of the page a finger that scrolls hardly seems to move.
+    this.#touchStart = second ? undefined : { x: touch.screenX, y: touch.screenY }
+  }
+
+  /**
+   * Swipes turn the page the way the finger drags it: to the right for the page on the left.
+   * Judged when the finger is lifted, without interfering with the touch itself, so that scrolling
+   * the host page, pinch zoom and panning a zoomed page work as usual. A touch only counts when it
+   * cannot be one of those, or a tap: long enough, clearly sideways, and not zoomed in.
+   */
+  #onTouchEnd = (e: TouchEvent): void => {
+    const start = this.#touchStart
+    this.#touchStart = undefined
+    if (!start || !this.#options.swipe || e.type === 'touchcancel' || this.#selecting) return
+    const dx = e.changedTouches[0].screenX - start.x
+    const dy = e.changedTouches[0].screenY - start.y
+    if (Math.abs(dx) < SWIPE_DISTANCE || Math.abs(dx) < SWIPE_SLOPE * Math.abs(dy)) return
+    if ((this.#window.visualViewport?.scale ?? 1) > 1.01) return
+    this.#inputTurn(dx > 0 ? this.goLeft : this.goRight)
+  }
+
   /** Clicks on the empty sides of a width-limited page turn pages too. */
   #onSideClick = (e: MouseEvent): void => {
-    if (e.target !== this.#container) return
+    if (!this.#options.click || e.target !== this.#container) return
     const { left, right } = this.#iframe.getBoundingClientRect()
     if (e.clientX < left) this.#inputTurn(this.goLeft)
     else if (e.clientX > right) this.#inputTurn(this.goRight)
@@ -472,9 +628,9 @@ export class EpubViewer extends EventTarget {
   }
 
   #followLink(href: string): void {
-    const target = resolvePath(href, this.book!.sections[this.#index].href)
+    const target = resolvePath(href, this.#book!.sections[this.#index].href)
     if (target) {
-      void this.goTo(target)
+      this.goTo(target).catch(this.#reportError)
     } else if (
       // Only web and mail links: a javascript: URL would run with the host page's origin.
       /^(https?|mailto):/i.test(href) &&
