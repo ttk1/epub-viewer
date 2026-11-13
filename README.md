@@ -7,7 +7,7 @@
 - **縦書きの小説**: 縦書きの本は右から左へページが進みます。ルビ・縦中横・傍点に対応し、横書きの本を縦書きで表示することもできます
 - **漫画などの固定レイアウト**: ページを画面に合わせて拡大縮小し、横長の画面では見開き（2 ページ並び）で表示します
 - **ページ送り**: キーボード、クリック・タップ、スワイプ、マウスホイール・トラックパッド。リモコン操作でもページが飛ばないチャタリング対策つき
-- **組み込みやすさ**: フレームワーク非依存で、ランタイム依存はありません（ZIP の展開もブラウザ標準の機能で行います）。ビルド後の大きさは、圧縮・最小化なしの状態を gzip して約 32 KB です
+- **組み込みやすさ**: フレームワーク非依存で、ランタイム依存はありません（ZIP の展開もブラウザ標準の機能で行います）。ビルド後の大きさは、圧縮・最小化なしの状態を gzip して約 33 KB です
 - **安全性**: 書籍の中のスクリプトは動かしません。外部への通信もさせません
 
 | 知りたいこと | 読むところ |
@@ -415,7 +415,8 @@ TypeScript 用に次の型も export しています: `BookSource`（`openBook()
 ### 組み込む側で気を付けること
 
 - `loadCover()` が返す表紙は、画像として登録されたものだけです。ただし SVG の表紙（`blob.type` が `image/svg+xml`）はスクリプトを含められます。blob: URL にして `<img>` で表示するぶんには動きませんが、読者が「画像を新しいタブで開く」とページの権限で動きます。信頼できない本を扱うなら、SVG の表紙は `data:` URL にする（`FileReader.readAsDataURL()`）か、表示しないでください。
-- 組み込み先のページに Content-Security-Policy ヘッダーを付ける場合は、書籍の表示に blob: URL を使うため、少なくとも `frame-src blob:`、`img-src blob: data:`、`style-src blob: 'unsafe-inline'`、`font-src blob: data:`、`media-src blob: data:` を許可してください（`default-src` で許可していれば不要）。`EpubReader` はツールバーのスタイルを `<style>` 要素で追加するので、`style-src 'unsafe-inline'` も必要です。
+- 組み込み先のページに Content-Security-Policy ヘッダーを付ける場合は、書籍の表示に blob: URL を使うため、少なくとも `frame-src blob:`、`img-src blob: data:`、`style-src blob: 'unsafe-inline'`、`font-src blob: data:`、`media-src blob: data:` を許可してください（`default-src` で許可していれば不要）。`EpubReader` はツールバーのスタイルを `<style>` 要素で追加するので、`style-src 'unsafe-inline'` も必要です。`frame-src` の許可が足りず書籍のページを読み込めないとき、`open()` や `goTo()` などは reject されます。
+- 組み込み先のページに `frame-ancestors 'none'` は付けないでください。Safari（WebKit）は、この指定を書籍のページ（blob: URL のフレーム）にも当てはめるので、ページが表示されなくなります（`open()` は reject されます）。ほかのサイトに埋め込ませたくない場合は、`frame-ancestors 'self'` か `X-Frame-Options` を使ってください。
 - **ライブラリから受け取る値は、書籍が自由に決められます**。`book.metadata`（タイトルや著者）、`book.toc` の `label`、`error` イベントのメッセージ（ファイル名を含む）、`link` イベントの `href` は、HTML としてではなく文字列として表示してください（`innerHTML` ではなく `textContent`）。`link` の `href` は整えた URL ですが、行き先を判定するときは、文字列の前方一致ではなく `new URL(href)` の `hostname` などを使ってください（`https://許可するホスト@別のホスト/` のような URL があるため）。`sectionload` で渡される `doc` も書籍の文書そのものです。
 - **読書位置の保存キー**（`EpubReader`）は、指定しなければ本の識別子（`dc:identifier`）で、これも書籍が決めます。別の本と同じ識別子を名乗れば、その本の読書位置を上書きできます。信頼できない本を扱うサイトでは、`open(source, { key })` で自分の ID を指定してください。
 - **書籍は、自分のページの中では自由に表示できます**。入力欄やボタンを置く、音声や動画を自動再生する、ページ全体をリンクで覆う（クリックすると `link` イベントが発生し、止めなければ新しいタブで開きます）といったことは防ぎません。困る場合は、`sectionload` で渡される文書から該当する要素を取り除く、`link` イベントで確認を挟む、といった対応を組み込む側で行えます。

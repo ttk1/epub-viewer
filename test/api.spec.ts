@@ -424,6 +424,62 @@ test('controls that the app adds to the toolbar keep the focus that they are giv
   await expect(page.locator('.progress')).toHaveText(/^1 \//)
 })
 
+// A page with a Content-Security-Policy of its own, and what open() comes to on it: 'shown', the
+// message that it rejects with, or 'pending'. The viewer is left in window.viewer.
+async function openUnderPolicy(page: Page, csp: string): Promise<{ outcome: string; frames: number }> {
+  await page.route('**/site.html', (route) =>
+    route.fulfill({ contentType: 'text/html', headers: { 'content-security-policy': csp }, body: '<!doctype html><meta charset="utf-8"><body style="margin: 0"><div id="viewer" style="height: 100vh"></div>' }),
+  )
+  await page.goto('/site.html')
+  return page.evaluate(async () => {
+    const { EpubViewer, openBook } = await import('/dist/src/index.js' as string)
+    const viewer = ((window as any).viewer = new EpubViewer(document.getElementById('viewer')!))
+    const book = await openBook('/samples/nepub.epub')
+    const outcome = await Promise.race([
+      viewer.open(book).then(() => 'shown', (error: Error) => error.message),
+      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 5000)),
+    ])
+    return { outcome, frames: document.querySelectorAll('iframe').length }
+  })
+}
+const POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:"
+
+test('open() rejects when the Content-Security-Policy of the host page does not allow the frames of the book', async ({ page }) => {
+  // It used to wait for good: the frame never loads, and the site could not tell its user.
+  // With frame-src given, and with default-src standing in for it.
+  for (const csp of [`${POLICY}; frame-src 'none'`, POLICY]) {
+    const { outcome, frames } = await openUnderPolicy(page, csp)
+    expect(outcome).toContain('Content-Security-Policy')
+    expect(frames).toBe(1) // the frame that could not be loaded is not left behind
+  }
+})
+
+test("open() comes to an end under frame-ancestors 'none'", async ({ page, browserName }) => {
+  // WebKit applies the directive to the frame of the book as well (it takes the policy of the
+  // page that made the blob: URL), and so does not show it: see the README.
+  const { outcome } = await openUnderPolicy(page, `${POLICY}; frame-src blob:; frame-ancestors 'none'`)
+  if (browserName === 'webkit') expect(outcome).toContain('Content-Security-Policy')
+  else expect(outcome).toBe('shown')
+})
+
+test('a move that the Content-Security-Policy of the host page stops rejects, and the page before it stays', async ({ page }) => {
+  expect((await openUnderPolicy(page, `${POLICY}; frame-src blob:`)).outcome).toBe('shown')
+  const result = await page.evaluate(async () => {
+    const viewer = (window as any).viewer
+    // A policy can be made stricter while the page is open.
+    document.head.append(Object.assign(document.createElement('meta'), { httpEquiv: 'Content-Security-Policy', content: "frame-src 'none'" }))
+    const outcome = await Promise.race([
+      viewer.goTo({ index: 1, progress: 0 }).then(() => 'shown', (error: Error) => error.message),
+      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 5000)),
+    ])
+    const index = viewer.location.index
+    await viewer.next() // pages of the section shown can still be turned
+    return { outcome, index, frames: document.querySelectorAll('iframe').length, page: viewer.location.progress > 0 }
+  })
+  expect(result.outcome).toContain('Content-Security-Policy')
+  expect(result).toMatchObject({ index: 0, frames: 1, page: true })
+})
+
 test('a site of one EPUB per episode can be made with EpubReader alone', async ({ page }) => {
   // What such a site does with the reader, under the Content-Security-Policy that it sends: its own
   // link and status in the toolbar, its own title, a key of its own for each episode, the next and
