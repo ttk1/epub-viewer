@@ -41,6 +41,26 @@ export function prepare(doc: Document): void {
 const OWN_COLORS = 'data-epub-viewer-colors'
 /** Marks an element in a monospace font, which it keeps. */
 const OWN_FONT = 'data-epub-viewer-font'
+/** Its value where the book justifies the element like the text around it: a line of code that wraps would have its spaces stretched. */
+const JUSTIFIED = 'justified'
+/** Marks an element whose borders are drawn in a dark color: on a dark page, they take the color of the text. */
+const DARK_BORDER = 'data-epub-viewer-border'
+/**
+ * Small images of characters that fonts do not have, by the class that the EBPAJ guide gives them:
+ * black on white (or on nothing), in a line of text.
+ */
+const GLYPHS = 'img[class*="gaiji"]'
+
+// Colors as browsers give them in computed styles.
+/** The opacity: "rgba(r, g, b, a)", or "... / a)" in other notations. */
+const alpha = (color: string) => Number(color.match(/^rgba\(.*,\s*([\d.]+)\)$/)?.[1] ?? color.match(/\/\s*([\d.]+)\)$/)?.[1] ?? 1)
+/** How bright, from 0 to 1 (1 for a notation that is not read, or no color at all). */
+const brightness = (color: string) => {
+  const [r, g, b] = color.startsWith('rgb') ? (color.match(/[\d.]+/g) ?? []).map(Number) : []
+  return b === undefined ? 1 : (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+}
+/** What cannot be seen on a dark page. Red, or a mid grey, can. */
+const DARK = 0.2
 
 /**
  * Finds what the viewer must not give its own colors and font, as it does to the rest of the text.
@@ -50,17 +70,21 @@ const OWN_FONT = 'data-epub-viewer-font'
  *   the theme can be unreadable on it: a heading in white on black became black on black, and
  *   code on light grey could not be read in a dark theme. A mere tint is not such a background.
  * - Code. The font of the reader's choice is for the text; in it, code is not told from the text.
+ *
+ * And what is drawn for a white page, and lost on a dark one: rules and frames in black (not those
+ * on a background of the book, which are seen on it).
  */
 export function keepBookStyles(doc: Document): void {
-  // The opacity of a color as browsers give it: "rgba(r, g, b, a)", or "... / a)" in other notations.
-  const alpha = (color: string) => Number(color.match(/^rgba\(.*,\s*([\d.]+)\)$/)?.[1] ?? color.match(/\/\s*([\d.]+)\)$/)?.[1] ?? 1)
   for (const el of doc.body?.querySelectorAll<HTMLElement>('*') ?? []) {
-    const { backgroundColor, color, fontFamily } = doc.defaultView!.getComputedStyle(el)
-    if (alpha(backgroundColor) >= 0.5) {
+    const style = doc.defaultView!.getComputedStyle(el)
+    if (alpha(style.backgroundColor) >= 0.5) {
       el.setAttribute(OWN_COLORS, '')
-      el.style.setProperty('color', color, 'important') // the one of the book, where the theme's would be inherited
+      el.style.setProperty('color', style.color, 'important') // the one of the book, where the theme's would be inherited
+    } else if (!Element.prototype.closest.call(el, `[${OWN_COLORS}]`)) {
+      const borders = (['Top', 'Right', 'Bottom', 'Left'] as const).filter((side) => parseFloat(style[`border${side}Width`]) > 0 && alpha(style[`border${side}Color`]) >= 0.5)
+      if (borders.length && borders.every((side) => brightness(style[`border${side}Color`]) < DARK)) el.setAttribute(DARK_BORDER, '')
     }
-    if (/\bmonospace\b/.test(fontFamily)) el.setAttribute(OWN_FONT, '')
+    if (/\bmonospace\b/.test(style.fontFamily)) el.setAttribute(OWN_FONT, style.textAlign === 'justify' ? JUSTIFIED : '')
   }
 }
 
@@ -122,12 +146,24 @@ export function paginate(
     body {
       writing-mode: ${writingMode} !important;
       margin: 0 !important;
+      /* The colors of the page are the theme's. With the color too: a book that sets both on
+         <body> (black on white) would be left with its black on a dark page. */
       background: transparent !important;
+      color: inherit !important;
     }
     /* Not what keepBookStyles() has marked: code, and text on a background of the book. */
     ${fontFamily ? `body, body :not([${OWN_FONT}]) { font-family: ${fontFamily} !important; }` : ''}
-    body :not(a):not([${OWN_COLORS}], [${OWN_COLORS}] *) { color: inherit !important; }
+    [${OWN_FONT}="${JUSTIFIED}"] { text-align: start !important; }
+    body :not(a):not([${OWN_COLORS}], [${OWN_COLORS}] *) {
+      color: inherit !important;
+      /* What is drawn with the text, in a color that the book may set apart from it. */
+      -webkit-text-emphasis-color: currentcolor !important;
+      text-emphasis-color: currentcolor !important;
+      text-decoration-color: currentcolor !important;
+    }
     :is(a:link, a:visited):not([${OWN_COLORS}], [${OWN_COLORS}] *) { color: ${theme.link} !important; }
+    /* The white around a character does not show on a page of another color (e.g. sepia). */
+    ${GLYPHS} { mix-blend-mode: multiply !important; }
     img, svg, video {
       /* No larger than a page, nor than the room that is left by what they are in (e.g. a <figure>, which has margins). */
       max-width: ${vertical ? `${w - 2 * m}px` : `min(100%, ${columnWidth}px)`} !important;
@@ -148,6 +184,15 @@ export function paginate(
   // without the second column where there is none. The last page could not be scrolled to as a
   // whole, and was shown shifted. A mark at the end of the last page gives it the room.
   const [along, across] = vertical ? ['top', 'left'] : ['left', 'top']
+  // On a dark page, what the book draws in black for a white one is lost: borders take the color
+  // of the text, and images of characters are turned to white on black, of which only the white shows.
+  // (The color of the theme is any CSS color: read as the browser has resolved it.)
+  const dark = brightness(doc.defaultView!.getComputedStyle(doc.documentElement).backgroundColor) < 0.5
+  if (dark) {
+    style.textContent += `
+    [${DARK_BORDER}] { border-color: currentcolor !important; }
+    ${GLYPHS}:not([${OWN_COLORS}] *) { filter: invert(1) !important; mix-blend-mode: screen !important; }`
+  }
   style.textContent += `
     html::after {
       content: '' !important; display: block !important; position: absolute !important;

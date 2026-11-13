@@ -121,6 +121,68 @@ test('text on a background that the book gives it keeps the color of the book, i
   expect(dark.link).toBe(light.link)
 })
 
+const DARK = "{ background: '#000000', color: '#acacac', link: '#7fa3d9' }"
+
+// As Project Gutenberg makes them. The background of the page is the theme's, whatever the book says.
+test('text is in the color of the theme when the book sets the colors of the page on <body>', async ({ page }) => {
+  const head = '<style>body { color: black; background-color: white; }</style>'
+  const use = `(viewer, _book, doc) => {
+    viewer.setOptions({ theme: ${DARK} })
+    return ['heading', 'text'].map((id) => doc.defaultView.getComputedStyle(doc.getElementById(id)).color)
+  }`
+  const colors = await open(page, makeBook([['a.xhtml', xhtml('<h1 id="heading">CONTENTS</h1><p id="text">text</p>', head)]], PAGE, SPINE), new Function(`return ${use}`)())
+  expect(colors).toEqual(['rgb(172, 172, 172)', 'rgb(172, 172, 172)'])
+})
+
+// The same template draws all its rules and frames in black, whatever the page is.
+test('rules and frames that the book draws in black can be seen on a dark page', async ({ page }) => {
+  const body =
+    '<p id="rule" style="border-bottom: 1px solid #000000">見出し</p><hr id="hr" style="border: none; border-top: 2px solid #000000"/>' +
+    '<p id="red" style="border: 1px solid #ff0000">赤</p><table><tr><td id="cell" style="background: #ffffff; border: 1px solid #000000">表</td></tr></table>'
+  const use = `(viewer, _book, doc) => {
+    const read = () => Object.fromEntries([['rule', 'Bottom'], ['hr', 'Top'], ['red', 'Top'], ['cell', 'Top']].map(([id, side]) => [id, doc.defaultView.getComputedStyle(doc.getElementById(id))['border' + side + 'Color']]))
+    const light = read()
+    viewer.setOptions({ theme: ${DARK} })
+    return { light, dark: read() }
+  }`
+  const colors = await open(page, makeBook([['a.xhtml', xhtml(body)]], PAGE, SPINE), new Function(`return ${use}`)())
+  const [black, red, text] = ['rgb(0, 0, 0)', 'rgb(255, 0, 0)', 'rgb(172, 172, 172)']
+  expect(colors).toEqual({
+    light: { rule: black, hr: black, red, cell: black },
+    dark: { rule: text, hr: text, red, cell: black }, // not what can be seen as it is, nor what is on a background of the book
+  })
+})
+
+test('emphasis dots that the book gives a color of their own follow the theme, like the text', async ({ page }) => {
+  const head = '<style>.em { -webkit-text-emphasis: sesame; text-emphasis: sesame; -webkit-text-emphasis-color: #000000; text-emphasis-color: #000000; }</style>'
+  const use = `(viewer, _book, doc) => {
+    viewer.setOptions({ theme: ${DARK} })
+    const style = doc.defaultView.getComputedStyle(doc.getElementById('em'))
+    return style.textEmphasisColor || style.webkitTextEmphasisColor
+  }`
+  const color = await open(page, makeBook([['a.xhtml', xhtml('<p>文<span id="em" class="em">強調</span></p>', head)]], PAGE, SPINE), new Function(`return ${use}`)())
+  expect(color).toBe('rgb(172, 172, 172)')
+})
+
+// Characters that fonts do not have are small images of black on white (class "gaiji" in the same guide).
+test('images of characters blend into the page, in any theme', async ({ page }) => {
+  const body = '<p>文<img id="glyph" class="gaiji" src="i.svg" alt=""/>字 <span style="background: #c0c0c0"><img id="marked" class="gaiji-wide" src="i.svg" alt=""/></span><img id="picture" src="i.svg" alt=""/></p>'
+  const use = `(viewer, _book, doc) => {
+    const read = () => Object.fromEntries(['glyph', 'marked', 'picture'].map((id) => {
+      const style = doc.defaultView.getComputedStyle(doc.getElementById(id))
+      return [id, style.filter + ' ' + style.mixBlendMode]
+    }))
+    const light = read()
+    viewer.setOptions({ theme: ${DARK} })
+    return { light, dark: read() }
+  }`
+  const styles = await open(page, makeBook([['a.xhtml', xhtml(body)], IMAGE], PAGE + IMAGE_ITEM, SPINE), new Function(`return ${use}`)())
+  expect(styles).toEqual({
+    light: { glyph: 'none multiply', marked: 'none multiply', picture: 'none normal' },
+    dark: { glyph: 'invert(1) screen', marked: 'none multiply', picture: 'none normal' }, // as the book has it on its own background
+  })
+})
+
 test('code keeps its monospace font when the fonts of the book are replaced', async ({ page }) => {
   const body = '<p id="text">text <span id="code" style="font-family: monospace">j$.</span></p><pre id="pre">var foo = <b id="bold">1</b></pre><p id="gothic" style="font-family: sans-serif">見出し</p>'
   const fonts = await open(page, makeBook([['a.xhtml', xhtml(body)]], PAGE, SPINE), (viewer, _book, doc) => {
@@ -128,6 +190,16 @@ test('code keeps its monospace font when the fonts of the book are replaced', as
     return Object.fromEntries(['text', 'code', 'pre', 'bold', 'gothic'].map((id) => [id, doc.defaultView!.getComputedStyle(doc.getElementById(id)!).fontFamily]))
   })
   expect(fonts).toEqual({ text: 'serif', gothic: 'serif', code: 'monospace', pre: 'monospace', bold: 'monospace' })
+})
+
+test('a line of code that wraps is not spread over the width of the page', async ({ page }) => {
+  // Justified like the text around it, the spaces of a wrapped line of code were stretched.
+  const head = '<style>div { text-align: justify; }</style>'
+  const body = '<div id="text">text</div><div id="code" style="font-family: monospace; white-space: pre-wrap">var foo = "method(" + argument1 + "," + argument2 + ")";</div>'
+  const aligned = await open(page, makeBook([['a.xhtml', xhtml(body, head)]], PAGE, SPINE), (_viewer, _book, doc) =>
+    ['text', 'code'].map((id) => doc.defaultView!.getComputedStyle(doc.getElementById(id)!).textAlign),
+  )
+  expect(aligned).toEqual(['justify', 'start'])
 })
 
 test('vertical text and upright numbers that are set with the -webkit- prefix only', async ({ page }) => {
@@ -193,13 +265,15 @@ const twoSections = (count: number) =>
 test('every next() in two columns goes forward, to the last page and on to the next section', async ({ page }) => {
   const backwards: unknown[] = []
   for (const count of [21, 23, 25, 27, 29, 31, 33, 35, 37]) {
+    // Where the viewer is after each next(): not every relocate, which a re-layout repeats for the same page.
     const seen = await open(page, twoSections(count), async (viewer) => {
       viewer.setOptions({ spread: 'always' })
-      const seen: number[][] = []
-      viewer.addEventListener('relocate', (e: CustomEvent) => seen.push([e.detail.index, e.detail.page, e.detail.pages]))
+      const at = () => [(window as any).last.index, (window as any).last.page]
+      const seen = [at()]
       while (viewer.location.index === 0) {
         await viewer.next()
         await new Promise((resolve) => setTimeout(resolve, 200)) // the scroll event comes later
+        seen.push(at())
       }
       return seen
     })
