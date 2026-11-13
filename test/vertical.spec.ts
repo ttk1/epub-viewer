@@ -108,6 +108,54 @@ test.describe('nepub-style EPUB (vertical)', () => {
     await expect(page.locator('.progress')).toHaveText(`${pages} / ${pages}（33%）`)
   })
 
+  test('the slider under the toolbar shows the place in the book, and goes to another', async ({ page }) => {
+    const seek = page.locator('.seek')
+    const value = async () => Number(await seek.inputValue())
+    await expect(seek).toHaveAttribute('dir', 'rtl') // from the right, the way the pages go
+    const start = await value()
+    await press(page, 'ArrowLeft')
+    expect(await value()).toBeGreaterThan(start)
+
+    // With the focus on the slider, the keys still turn one page (left to the browser, they would
+    // move it by a step of its own: the whole book, in one of them).
+    await seek.focus()
+    const focused = await value()
+    await press(page, 'ArrowLeft')
+    expect(await value()).toBeGreaterThan(focused)
+    expect(await value()).toBeLessThan(focused + 0.05)
+    expect(await page.evaluate(() => document.activeElement?.className)).toBe('seek')
+
+    await seek.fill('0.6') // as a drag does
+    await expect.poll(value).toBeGreaterThanOrEqual(0.6) // the end of the page that this much of the book falls on
+    expect(await value()).toBeLessThan(0.65)
+    await expect(page.locator('.percent')).toHaveText(/（6\d%）/)
+
+    // Only the thumb takes the pointer: a click elsewhere on the line does not move it (nor does a
+    // touch near it, which is how a swipe at the top of the page lost the place).
+    const box = (await seek.boundingBox())!
+    const y = box.y + box.height / 2
+    const before = await value()
+    await page.mouse.click(box.x + box.width * 0.75, y)
+    await page.waitForTimeout(AFTER_INPUT)
+    expect(await value()).toBe(before)
+
+    // The thumb dragged with the mouse, to a quarter of the way from the right. The keys turn pages again after it.
+    const thumb = 28
+    await page.mouse.move(box.x + box.width - thumb / 2 - before * (box.width - thumb), y)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.75, y, { steps: 5 })
+    // While it is held, the numbers follow it: the share of the book (the pages of text there are not known yet).
+    await expect(page.locator('.progress')).toHaveText(/^2\d%$/)
+    await page.mouse.up()
+    await expect(page.locator('.progress')).toHaveText(/^\d+ \/ \d+（2\d%）$/)
+    await expect.poll(value).toBeLessThan(0.3)
+    const dragged = await value()
+    expect(dragged).toBeGreaterThan(0.2)
+    expect(await page.evaluate(() => document.activeElement?.className)).not.toBe('seek')
+    await press(page, 'ArrowLeft')
+    expect(await value()).toBeGreaterThan(dragged)
+  })
+
   test('jumps via the table of contents', async ({ page }) => {
     // nepub lists chapters, each linking to its first episode, with their episodes below.
     await expect(page.locator('.toc-list button')).toHaveText(['第一章', '第1話　サンプル', '第2話　サンプル', '第二章', '第3話　サンプル'])

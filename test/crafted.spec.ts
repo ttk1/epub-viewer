@@ -133,11 +133,16 @@ test('a horizontal page of a book that is read from right to left turns the way 
   const manifest = `${PAGE}<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>`
   const bytes = makeBook([['a.xhtml', xhtml('<h1>Cover</h1>')], ['b.xhtml', vertical]], manifest, '<itemref idref="a"/><itemref idref="b"/>', 'rtl')
   const result = await open(page, bytes, async (viewer) => {
+    // Where the viewer is after each step: not every relocate, which a re-layout repeats for the same page.
+    let last: unknown[] = []
+    viewer.addEventListener('relocate', (e: CustomEvent) => (last = [e.detail.index, e.detail.rtl]))
     const seen: unknown[] = []
-    viewer.addEventListener('relocate', (e: CustomEvent) => seen.push([e.detail.index, e.detail.rtl]))
     await viewer.goLeft() // on to the text, not back past the start of the book
+    seen.push(last)
     viewer.setOptions({ writingMode: 'horizontal' }) // horizontal text that the reader asked for goes to the right
+    seen.push(last)
     await viewer.goLeft()
+    seen.push(last)
     return seen
   })
   expect(result).toEqual([[1, true], [1, false], [0, false]])

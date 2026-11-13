@@ -178,6 +178,14 @@ test.describe('general EPUB 2 (horizontal)', () => {
     expect(await evaluate(page, () => document.scrollingElement!.scrollLeft / innerWidth)).toBe(found + 1)
   })
 
+  test('the slider under the toolbar goes from the left for a book read from left to right', async ({ page }) => {
+    const seek = page.locator('.seek')
+    await expect(seek).toHaveAttribute('dir', 'ltr')
+    const start = Number(await seek.inputValue())
+    await press(page, 'ArrowRight')
+    expect(Number(await seek.inputValue())).toBeGreaterThan(start)
+  })
+
   test('skips non-linear spine items', async ({ page }) => {
     const pages = await pageCount(page)
     for (let i = 0; i < pages; i++) await press(page, 'ArrowRight')

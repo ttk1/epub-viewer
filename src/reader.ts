@@ -59,6 +59,16 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   direction: 'auto',
 }
 
+/** What the keys do while the focus is on the slider: the page turns of the viewer. */
+const SEEK_KEYS: Record<string, 'goLeft' | 'goRight' | 'prev' | 'next' | undefined> = {
+  ArrowLeft: 'goLeft',
+  ArrowRight: 'goRight',
+  ArrowUp: 'prev',
+  ArrowDown: 'next',
+  PageUp: 'prev',
+  PageDown: 'next',
+}
+
 /** A row of the settings panel: radio buttons named after the setting, one per value. */
 const choices = (name: keyof ReaderSettings, label: string, options: [value: string | number, label: string, style?: string][]) => `
   <div class="row">
@@ -80,6 +90,7 @@ const TOOLBAR = `
   </details>
   <span class="title"></span>
   <span class="progress"><span class="pages"></span><span class="percent"></span></span>
+  <input type="range" class="seek" min="0" max="1" step="any" value="0" title="本の中の位置" aria-label="本の中の位置" hidden>
   <details class="settings">
     <summary title="表示設定" aria-label="表示設定">Aa</summary>
     <form class="panel">
@@ -131,11 +142,32 @@ const STYLE = `
     padding: 6px 10px; border-bottom: 1px solid var(--line);
   }
   .epub-reader .toolbar[hidden] { display: none; } /* the app may hide it, e.g. on a tap */
-  /* Progress through the book, drawn over the border. */
-  .epub-reader .toolbar::after {
-    content: ''; position: absolute; left: 0; bottom: -1px; width: calc(var(--progress, 0) * 100%); height: 2px;
-    background: var(--fg); opacity: 0.5; transition: width 0.2s;
+  /* Progress through the book, drawn over the border: a slider, to go to another place in it.
+     The line is filled up to the place (from the right, where the pages go to the left).
+     Only its thumb takes the pointer. A touch is given to a control near it: with the whole line
+     taking it, a swipe that began at the top of the page moved the slider, and the place was lost. */
+  .epub-reader .seek {
+    --fill: linear-gradient(to right, var(--fg) calc(var(--progress, 0) * 100%), transparent 0);
+    --thumb: 28px; /* a dot of 12px, with room around it for a finger */
+    position: absolute; left: 0; bottom: calc(var(--thumb) / -2); box-sizing: border-box;
+    width: 100%; height: var(--thumb); margin: 0; padding: 0;
+    -webkit-appearance: none; appearance: none; background: none; pointer-events: none;
   }
+  .epub-reader .seek[dir='rtl'] { --fill: linear-gradient(to left, var(--fg) calc(var(--progress, 0) * 100%), transparent 0); }
+  .epub-reader .seek::-webkit-slider-runnable-track { height: 2px; background: var(--fill); }
+  .epub-reader .seek::-moz-range-track { height: 2px; background: var(--fill); }
+  .epub-reader .seek::-webkit-slider-thumb {
+    -webkit-appearance: none; box-sizing: border-box; width: var(--thumb); height: var(--thumb); margin-top: calc(1px - var(--thumb) / 2);
+    border: 8px solid transparent; border-radius: 50%; background: var(--fg) padding-box; cursor: pointer; pointer-events: auto;
+  }
+  .epub-reader .seek::-moz-range-thumb {
+    box-sizing: border-box; width: var(--thumb); height: var(--thumb);
+    border: 8px solid transparent; border-radius: 50%; background: var(--fg) padding-box; cursor: pointer; pointer-events: auto;
+  }
+  /* The focus is shown on the thumb: the box of the slider is as wide as the toolbar. */
+  .epub-reader .toolbar .seek:focus-visible { outline: none; }
+  .epub-reader .seek:focus-visible::-webkit-slider-thumb { border-color: var(--hover); }
+  .epub-reader .seek:focus-visible::-moz-range-thumb { border-color: var(--hover); }
   .epub-reader :is(.toolbar > :is(button, select, a, label), summary, .panel button) {
     box-sizing: border-box; padding: 6px 10px; border: 0; border-radius: 8px;
     background: none; color: inherit; font: inherit; text-decoration: none; white-space: nowrap; cursor: pointer;
@@ -202,7 +234,7 @@ const STYLE = `
   .epub-reader.menu-open .viewer::after { content: ''; position: absolute; inset: 0; }`
 
 /**
- * A ready-made reader UI: toolbar (table of contents, progress, and a settings menu for font size,
+ * A ready-made reader UI: toolbar (table of contents, progress with a slider, and a settings menu for font size,
  * font, line height, width, margin, writing mode, spread, direction and theme) + EpubViewer, with settings
  * and reading positions saved in a storage. Add your own controls to `toolbar`, and use `viewer`
  * for events and navigation.
@@ -222,6 +254,8 @@ export class EpubReader {
   #opening?: Promise<Book>
   /** The document of the section shown (of a fixed-layout book: of one of its pages). */
   #page?: Document
+  /** The progress shown for the page on the screen: the share of the book, and the pages. */
+  #shown?: [fraction: number, pages: string]
   /** The section whose entry is marked in the table of contents. */
   #marked = -1
   /**
@@ -255,13 +289,14 @@ export class EpubReader {
     this.#settings = { ...DEFAULT_SETTINGS, ...settings, ...saved }
 
     this.viewer.addEventListener('relocate', (e) => {
-      const { index, page, pages, fraction } = e.detail
+      const { index, page, pages, fraction, rtl } = e.detail
       // The pages of the section. A fixed-layout book has one page to a section, so there the sections are counted.
       const book = this.#book!
       const fixed = book.metadata.layout === 'pre-paginated'
-      this.#part('pages').textContent = fixed ? `${index + 1} / ${book.sections.length}` : `${page + 1} / ${pages}`
-      this.#part('percent').textContent = `（${Math.round(fraction * 100)}%）`
-      root.style.setProperty('--progress', String(fraction))
+      this.#shown = [fraction, fixed ? `${index + 1} / ${book.sections.length}` : `${page + 1} / ${pages}`]
+      this.#showProgress(...this.#shown)
+      // The slider goes the way the pages do: from the right for a book read from right to left.
+      Object.assign(this.#part<HTMLInputElement>('seek'), { value: String(fraction), dir: rtl ? 'rtl' : 'ltr', hidden: false })
       this.#markCurrent(index)
       this.#save(`position:${this.#positionKey}`, this.viewer.location)
       // For the settings shown: a spread does nothing for vertical text, whose page is as wide as the screen already.
@@ -271,6 +306,7 @@ export class EpubReader {
     this.viewer.addEventListener('sectionload', (e) => (this.#page = e.detail.doc))
     this.toolbar.addEventListener('click', this.#onClick)
     this.toolbar.addEventListener('change', this.#onChange)
+    this.toolbar.addEventListener('input', this.#onInput)
     // On the document: after a click that opens a menu, the focus is not in the toolbar. The
     // document gets a key before the window, where the viewer listens.
     doc.addEventListener('keydown', this.#onKeydown)
@@ -390,24 +426,56 @@ export class EpubReader {
 
   #onClick = (e: MouseEvent): void => {
     // The controls of the reader, and buttons added by the app; not other things that it adds (e.g. a text field).
-    const control = (e.target as Element).closest<HTMLElement>('button, summary, .settings input')
+    const control = (e.target as Element).closest<HTMLElement>('button, summary, .settings input, .seek')
     if (control?.matches('.font-up, .font-down')) {
       const ratio = control.matches('.font-up') ? 1.2 : 1 / 1.2 // equal-looking steps at any size
       this.setSettings({ fontSize: Math.min(120, Math.max(12, Math.round(this.#settings.fontSize * ratio))) })
     } else if (control?.matches('.toc-list button')) {
       this.#closeMenus()
-      // Reported like a failed page turn, for the app to show.
-      this.viewer.goTo((control as HTMLButtonElement).value).catch((error: unknown) => {
-        this.viewer.dispatchEvent(new CustomEvent('error', { detail: { error } }))
-      })
+      this.#goTo((control as HTMLButtonElement).value)
+    } else if (control?.matches('.seek') && this.#shown && Number((control as HTMLInputElement).value) === this.#shown[0]) {
+      this.#showProgress(...this.#shown) // the thumb was let go where it was taken: no move follows, to show the page again
     }
     // After a click with the mouse (detail > 0), keys go back to turning pages instead of operating
     // the control again. Keyboard and remote control users keep their place in the toolbar.
     if (e.detail) control?.blur()
   }
 
+  /** Shows how far into the book: the pages (a count that depends on the kind of book), or only the share where they are not known. */
+  #showProgress(fraction: number, pages?: string): void {
+    const percent = `${Math.round(fraction * 100)}%`
+    this.#part('pages').textContent = pages ?? percent
+    this.#part('percent').textContent = pages ? `（${percent}）` : ''
+    this.#root.style.setProperty('--progress', String(fraction))
+  }
+
+  /**
+   * The thumb of the slider is being moved: the numbers follow it, and the move itself is made when
+   * it is let go (see #onChange). The page can be told ahead for a fixed-layout book only, where
+   * every section is one page: the pages of text are not known before a section is laid out.
+   */
+  #onInput = (e: Event): void => {
+    const book = this.#book
+    if (e.target !== this.#part('seek') || !book) return
+    const fraction = Number((e.target as HTMLInputElement).value)
+    const count = book.sections.length
+    // The page that this much of the book ends on, as goTo({ fraction }) takes it.
+    this.#showProgress(fraction, book.metadata.layout === 'pre-paginated' ? `${Math.max(1, Math.ceil(fraction * count - 1e-6))} / ${count}` : undefined)
+  }
+
+  /** A move that the user asked for in the toolbar. */
+  #goTo(target: BookTarget): void {
+    this.viewer.goTo(target).catch(this.#report)
+  }
+
+  /** A failure of such a move is reported like a failed page turn, for the app to show. */
+  #report = (error: unknown): void => {
+    this.viewer.dispatchEvent(new CustomEvent('error', { detail: { error } }))
+  }
+
   #onChange = (e: Event): void => {
     const input = e.target
+    if (input === this.#part('seek')) return this.#goTo({ fraction: Number((input as HTMLInputElement).value) })
     if (!(input instanceof HTMLInputElement) || !input.closest('.settings')) return // e.g. controls added by the app
     const key = input.name as keyof ReaderSettings
     this.setSettings({ [key]: typeof DEFAULT_SETTINGS[key] === 'number' ? Number(input.value) : input.value })
@@ -418,6 +486,14 @@ export class EpubReader {
    * preventDefault(), so that the viewer leaves them alone: the page behind a menu does not turn.
    */
   #onKeydown = (e: KeyboardEvent): void => {
+    // On the slider, the keys turn pages as they do elsewhere. Left to the browser, they move it by
+    // a step that differs between browsers (in Firefox, by the whole book).
+    const turn = e.target === this.#part('seek') && !(e.altKey || e.ctrlKey || e.metaKey) && SEEK_KEYS[e.key]
+    if (turn) {
+      e.preventDefault()
+      this.viewer[turn]().catch(this.#report)
+      return
+    }
     const menu = this.toolbar.querySelector('details[open]')
     if (!menu) return
     const target = e.target as HTMLElement

@@ -146,6 +146,22 @@ test.describe('fixed-layout EPUB (manga, right to left)', () => {
     expect(await titles(page)).toEqual(['Page 1'])
   })
 
+  test('the page number follows the thumb of the slider while it is moved', async ({ page }) => {
+    await open(page)
+    const box = (await page.locator('.seek').boundingBox())!
+    // Where the thumb (28px wide) is for a share of the book: from the right, as the pages go.
+    const at = (fraction: number) => box.x + 14 + (1 - fraction) * (box.width - 28)
+    const y = box.y + box.height / 2
+    await page.mouse.move(at(1 / 6), y) // the first of 6 pages
+    await page.mouse.down()
+    await page.mouse.move(at(0.7), y, { steps: 5 })
+    await expect(page.locator('.progress')).toHaveText(/^5 \/ 6（7\d%）$/) // the page that this much of the book ends on
+    expect(await titles(page)).toEqual(['Page 1']) // not moved yet
+    await page.mouse.up()
+    await expect(page.locator('.progress')).toHaveText('4 / 6（83%）') // its spread, counted by its first page
+    expect(await titles(page)).toEqual(['Page 5', 'Page 4'])
+  })
+
   test('jumps via the table of contents and resumes after reload', async ({ page }) => {
     await open(page)
     await chooseChapter(page, '第2話') // page 4
