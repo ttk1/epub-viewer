@@ -37,7 +37,7 @@ export interface ReaderOptions {
 
 export interface OpenOptions {
   /**
-   * Key for the saved reading position. Defaults to dc:identifier, then the URL or file name.
+   * Key for the saved reading position. Defaults to dc:identifier, then the URL or file name, then the title.
    * Give one when books share an identifier, e.g. per-episode EPUBs of the same novel.
    */
   key?: string
@@ -199,8 +199,9 @@ const STYLE = `
 
 /**
  * A ready-made reader UI: toolbar (table of contents, progress, and a settings menu for font size,
- * font, width, writing mode and theme) + EpubViewer, with settings and reading positions saved in
- * a storage. Add your own controls to `toolbar`, and use `viewer` for events and navigation.
+ * font, line height, width, writing mode, spread, direction and theme) + EpubViewer, with settings
+ * and reading positions saved in a storage. Add your own controls to `toolbar`, and use `viewer`
+ * for events and navigation.
  */
 export class EpubReader {
   /** The toolbar element; add your own buttons or links to it. */
@@ -490,7 +491,7 @@ export class EpubReader {
       const i = Number(button.dataset.index)
       // Of several entries for one section, the last one that is for the whole section: where a
       // chapter is followed by its episodes, the chapter links to the first episode. Entries for a
-      // place inside the section (#...) are not taken: where in the section the page is is not known.
+      // place inside the section (#...) are not taken: it is not known where in the section the page is.
       if (i >= 0 && i <= index && (i > best || (i === best && !button.value.includes('#')))) [current, best] = [button, i]
     }
     current?.setAttribute('aria-current', 'true')

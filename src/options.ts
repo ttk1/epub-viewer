@@ -23,7 +23,7 @@ export const fonts = {
 }
 
 export interface ViewerOptions {
-  // ---- How the book looks. The first group only applies to reflowable text, not to fixed-layout pages.
+  // ---- How the book looks. For fixed-layout pages, only the background of the theme, `spread` and `direction` apply.
   theme: Theme
   /** CSS font-family that overrides the book's fonts, e.g. `fonts.mincho`. "" keeps the book's fonts. */
   fontFamily: string

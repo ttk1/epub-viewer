@@ -87,7 +87,7 @@ Windows の Git Bash から `docker` にコンテナ内パス（`/work` など�
 
 ### 書籍の安全性
 
-WebKit は `allow-scripts` なしの sandbox iframe では親から登録したイベントリスナーが発火しない。そのため `allow-same-origin allow-scripts` とし、書籍内のスクリプトは `Book` が各文書に挿入する CSP で止めている。書籍の文書はホストと同一オリジンなので、スクリプトが動けばホストを操作できてしまう。以下は実際に再現を確認した穴で、`samples/general.epub` の攻撃用コンテンツと、テスト（`horizontal` / `crafted`）で守っている。
+WebKit は `allow-scripts` なしの sandbox iframe では親から登録したイベントリスナーが発火しない。そのため `allow-same-origin allow-scripts` とし、書籍内のスクリプトは `Book` が各文書に挿入する CSP で止めている。書籍の文書はホストと同一オリジンなので、スクリプトが動けばホストを操作できてしまう。以下は実際に再現を確認した穴で、`samples/general.epub` の攻撃用コンテンツと、テスト（`horizontal` / `crafted` / `hostile`）で守っている。
 
 守りたいのは次の性質で、項目はその順に並べてある。新しい経路を見つけたら、該当する性質のところに「何が起きたか → どう塞いだか」を足す。
 

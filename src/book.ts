@@ -164,8 +164,9 @@ export class Book {
   }
 
   /**
-   * Returns a URL (blob:) for a file in the archive, to use it as an image, a style sheet or a font. HTML and CSS are rewritten so that
-   * their references (images, stylesheets, fonts) also point to blob: URLs.
+   * Returns a URL (blob:) for a file in the archive, to use it as an image, a stylesheet or a font.
+   * HTML and CSS are rewritten so that their references (images, stylesheets, fonts) also point to
+   * such URLs.
    *
    * Files that can hold scripts (e.g. SVG images) get a data: URL instead: see #createUrl.
    */
@@ -278,7 +279,7 @@ export class Book {
     return css.replace(pattern, (match) => (match.startsWith('@') ? `@import ${cssString(urls[i++])}` : `url(${cssString(urls[i++])})`))
   }
 
-  /** Converts a reference found in the file at `base` into a blob: URL (external URLs are kept as-is). */
+  /** Converts a reference found in the file at `base` into the URL of that file, as of getUrl() (external URLs are kept as-is). */
   async #resolveUrl(href: string, base: string): Promise<string> {
     const [path, fragment] = resolvePath(href, base)?.split('#') ?? []
     // A reference back to the file itself is kept as it is, be it direct, e.g. url(#gradient), or
