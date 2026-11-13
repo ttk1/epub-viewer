@@ -1,6 +1,6 @@
 // Fixed-layout books in the standalone app: pages scaled to fit, and spreads.
 import { expect, test, type Page } from '@playwright/test'
-import { evaluate, press, click, openSettings, setting, chooseChapter } from './helpers.ts'
+import { evaluate, press, click, openSettings, setting, chooseChapter, pixel } from './helpers.ts'
 
 test.describe('fixed-layout EPUB (manga, right to left)', () => {
   /** The pages on the screen, from left to right: the title of each, and where its frame is. */
@@ -32,7 +32,7 @@ test.describe('fixed-layout EPUB (manga, right to left)', () => {
     await expect(page.locator('.progress')).toHaveText('2 / 6（50%）')
     const [left, right] = await shown(page)
     expect([left.title, right.title]).toEqual(['Page 3', 'Page 2']) // the first page of the pair on the right
-    expect(left.box.right).toBeCloseTo(right.box.left, 0) // no gap between them
+    expect(left.box.right - right.box.left).toBeCloseTo(1, 0) // no gap between them: a pixel over each other
     expect(left.box.left).toBeGreaterThanOrEqual(viewer.x)
     expect(right.box.right).toBeLessThanOrEqual(viewer.x + viewer.width)
     expect(left.box.height).toBeCloseTo(viewer.height, 0)
@@ -47,6 +47,26 @@ test.describe('fixed-layout EPUB (manga, right to left)', () => {
     await press(page, 'ArrowRight')
     expect(await titles(page)).toEqual(['Page 5', 'Page 4'])
   })
+
+  // The pages are scaled by a factor that is seldom a whole number of pixels: between them, the
+  // background of the viewer showed as a hairline (dark, in a dark theme, between two white pages).
+  for (const [width, height] of [[1000, 701], [1283, 807], [1437, 913]]) {
+    test(`nothing shows between the two pages of a spread (${width} × ${height})`, async ({ page }) => {
+      await page.setViewportSize({ width, height })
+      await open(page)
+      await setting(page, 'theme', 'dark')
+      await page.keyboard.press('Escape')
+      await press(page, 'ArrowLeft')
+      const [left, right] = await shown(page)
+      const y = Math.round(left.box.top + left.box.height / 2)
+      const sum = (color: number[]) => color[0] + color[1] + color[2]
+      const pages = [await pixel(page, Math.round(left.box.right) - 6, y), await pixel(page, Math.round(right.box.left) + 6, y)].map(sum)
+      // No pixel across the seam is darker than the pages: the edge of a scaled page may be lighter, as its other edges are.
+      for (let x = Math.round(right.box.left) - 3; x <= Math.round(left.box.right) + 3; x++) {
+        expect(sum(await pixel(page, x, y)), `at ${x}`).toBeGreaterThanOrEqual(Math.min(...pages) - 6)
+      }
+    })
+  }
 
   test('keeps a page on the screen while the next one loads', async ({ page }) => {
     await open(page)

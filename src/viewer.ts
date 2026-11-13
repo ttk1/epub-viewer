@@ -532,7 +532,10 @@ export class EpubViewer extends EventTarget {
       const scale = fitScale(sizes, width, height)
       this.#frames.forEach((frame, i) => {
         const [w, h] = sizes[i]
-        this.#styleFrame(frame, `width:${w * scale}px;height:${h * scale}px`, `width:${w}px;height:${h}px;transform:scale(${scale});transform-origin:0 0`)
+        // The second page of a spread goes a pixel over the first. Their sizes are seldom whole
+        // pixels, and the background of the viewer would show between them as a hairline.
+        const overlap = i ? `;margin-${this.#rtl ? 'right' : 'left'}:-1px` : ''
+        this.#styleFrame(frame, `width:${w * scale}px;height:${h * scale}px${overlap}`, `width:${w}px;height:${h}px;transform:scale(${scale});transform-origin:0 0`)
       })
       this.#stage.style.flexDirection = this.#rtl ? 'row-reverse' : 'row' // the first page on the right for "rtl"
       this.#pagination = ONE_PAGE
