@@ -33,7 +33,9 @@
 
 ## 試す（単体アプリ）
 
-必要なのは Docker だけです（ホストに Node.js は要りません）。
+ブラウザで [デモ](https://ttk1.github.io/epub-viewer/) を開くと、サンプルの本と、手元の EPUB を試せます。
+
+手元で動かす場合に必要なのは Docker だけです（ホストに Node.js は要りません）。
 
 ```sh
 docker compose up
@@ -443,7 +445,8 @@ docker compose run --rm node npm run build     # dist/ を生成
 | `src/` | ライブラリ本体。公開 API は `index.ts` |
 | `app/` | 単体アプリ |
 | `examples/` | 組み込み例 |
-| `scripts/` | 開発サーバー、サンプル EPUB 生成 |
+| `scripts/` | 開発サーバー、サンプル EPUB 生成、デモのサイトの組み立て |
+| `.github/workflows/` | テストを通してから、デモを GitHub Pages に公開する |
 | `test/` | Playwright テスト |
 
 設計の考え方、モジュールの構成、開発時のチェックリストは [CLAUDE.md](CLAUDE.md) にまとめています。

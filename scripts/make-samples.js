@@ -2,6 +2,7 @@
 //   nepub.epub        : same structure as EPUBs made by nepub (https://github.com/ttk1/nepub): 3 episodes
 //                       in 2 chapters, each with an illustration, emphasis dots, an empty line and a
 //                       run of "…" longer than a page
+//   novel.epub        : the same book, titled for the demo site
 //   episode-{1,2,3}.epub : nepub-style, one episode each (for examples/series.html)
 //   fixed.epub        : fixed layout (manga): one image per page, right to left, with the sides of the pages
 //   fixed-plain.epub  : the same, without the sides
@@ -374,6 +375,14 @@ mkdirSync('samples', { recursive: true })
 writeFileSync(
   'samples/nepub.epub',
   nepubEpub('nepub 形式サンプル', [
+    { name: '第一章', episodes: [episode(1), episode(2)] },
+    { name: '第二章', episodes: [episode(3)] },
+  ]),
+)
+// The same book under a name and a title that say what it shows, for the demo site (see make-site.js).
+writeFileSync(
+  'samples/novel.epub',
+  nepubEpub('縦書きサンプル', [
     { name: '第一章', episodes: [episode(1), episode(2)] },
     { name: '第二章', episodes: [episode(3)] },
   ]),

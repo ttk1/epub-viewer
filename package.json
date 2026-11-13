@@ -18,7 +18,8 @@
     "build": "tsc && tsc --emitDeclarationOnly --removeComments false",
     "dev": "node scripts/serve.js --build",
     "samples": "node scripts/make-samples.js",
-    "test": "tsc && npm run samples && playwright test"
+    "site": "node scripts/make-site.js",
+    "test": "tsc && npm run samples && npm run site && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

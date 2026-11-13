@@ -1,0 +1,52 @@
+name: Test and deploy the demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# ワークフロー全体は読み取りのみ。公開の権限は deploy ジョブだけに付与する
+# （テスト中に動く npm 依存のコードに pages:write を渡さないため）
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+# Action はタグの付け替えに影響されないようコミット SHA で固定する（公開から 7 日以上たった版）
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # compose.yaml と同じイメージ（Node.js とブラウザ入り、digest で固定）。
+    # @playwright/test を更新するときは、package.json・compose.yaml・ここの 3 か所を揃える
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --ipc=host --init
+    env:
+      HOME: /root # Firefox は、HOME の持ち主が実行ユーザー（root）と違うと起動しない
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # .npmrc（min-release-age、ignore-scripts）と package-lock.json の integrity がここでも効く
+      - run: npm ci --no-audit --no-fund
+      # 3 ブラウザのテストが通らなければ公開しない。ビルドとデモのサイト（site/）の組み立ても
+      # この中で行い、組み立てたサイトそのものをテストしてから公開する
+      - run: npm test
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

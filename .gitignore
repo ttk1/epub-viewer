@@ -3,3 +3,4 @@ dist/
 samples/
 test-results/
 playwright-report/
+site/

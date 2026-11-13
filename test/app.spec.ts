@@ -1,6 +1,6 @@
 // The standalone app and the example: opening files, the keyboard on the toolbar, the series example.
 import { expect, test, type Frame } from '@playwright/test'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { content, heading, press } from './helpers.ts'
 
@@ -98,4 +98,24 @@ test('series example opens the next / previous episode at the book boundaries', 
   await expect(status).toHaveText(/1 \/ 3 話/)
   await expect.poll(() => heading(page)).toBe('第1話　サンプル')
   await expect(page.locator('iframe')).toBeVisible()
+})
+
+// The demo site, as it is published: put together by scripts/make-site.js, under a path of its own.
+test('the demo site opens its sample books from its index page', async ({ page }) => {
+  await page.goto('/site/')
+  await page.getByRole('link', { name: '縦書きの小説' }).click()
+  await expect(page.locator('.title')).toHaveText('縦書きサンプル')
+  await expect(page.locator('.progress')).toHaveText(/^1 \/ \d+/)
+  expect(await content(page).evaluate(() => getComputedStyle(document.documentElement).writingMode)).toBe('vertical-rl')
+  await page.goto('/site/')
+  await page.getByRole('link', { name: '漫画' }).click()
+  await expect(page.locator('.progress')).toHaveText(/^1 \/ 6/)
+})
+
+test('the demo site holds only what it shows', () => {
+  const files = readdirSync('site', { recursive: true }).map(String).sort()
+  expect(files.filter((file) => file.endsWith('.epub'))).toEqual(['samples/fixed.epub', 'samples/novel.epub']) // not the book with hostile content
+  expect(files.filter((file) => /\.(ts|map)$/.test(file))).toEqual([])
+  // Nor the name of the tool that the format of the novel comes from: the demo is of the viewer.
+  for (const file of files.filter((file) => /\.(html|js|css)$/.test(file))) expect(readFileSync(`site/${file}`, 'utf8'), file).not.toMatch(/nepub/i)
 })

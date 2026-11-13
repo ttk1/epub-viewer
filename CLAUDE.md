@@ -32,7 +32,8 @@
 | `src/index.ts` | 公開 API（ここから export したものだけが公開 API） |
 | `app/` | 単体アプリ（`EpubReader` に「開く」ボタン・ドラッグ＆ドロップ・`?url=` を足しただけ） |
 | `examples/series.*` | 次話への自動遷移の組み込み例 |
-| `scripts/` | 開発サーバー、サンプル EPUB 生成、テスト用 ZIP ライター（Node 専用・ブラウザには出さない） |
+| `scripts/` | 開発サーバー、サンプル EPUB 生成、デモのサイトの組み立て、テスト用 ZIP ライター（Node 専用・ブラウザには出さない） |
+| `.github/workflows/deploy.yml` | `main` への push で、テストを通してからデモを GitHub Pages に公開する |
 | `test/` | Playwright テスト（Chromium / Firefox / WebKit）。`vertical` / `horizontal` / `manga`（単体アプリでの各種の本）、`touch`（タッチ）、`api`（組み込み側としての使い方）、`crafted`（テストごとにその場で作る本。壊れた本や、テストしか知らない値が要る細工）、`hostile`（保護をすり抜けた本・ビューアを働かなくした本の再発防止）、`compat`（nepub 以外のツールが作る本の作りと、ページの端で起きる問題）、`app`（単体アプリと例）、`spreads` / `zip`（単体テスト）、`helpers.ts`（共通の操作と、本を作る `makeBook()`） |
 
 ## コマンド（必ず Docker 経由。ホストの node/npm は使わない）
@@ -71,18 +72,26 @@ Windows の Git Bash から `docker` にコンテナ内パス（`/work` など�
 3. `package.json` と `package-lock.json` の `version` を書き換え、「バージョンを X.Y.Z にする」というコミットにする。
 4. そのコミットに `vX.Y.Z` のタグを付けて push し、GitHub のリリースを作る。本文は常体（〜した / 〜する）で簡潔に、箇条書き中心で書く。互換性のない変更があるときは、変更点と移行方法を先頭にまとめる。
 
+## デモ
+
+- `main` に push すると、GitHub Actions がテスト（`npm test`）を通してから、`site/`（`scripts/make-site.js` が組み立てる）を GitHub Pages に公開する。テストが通らなければ公開されない。きっかけをタグにしないのは、Pages の公開先（`github-pages` 環境）が既定で `main` からの公開しか許可していないため。
+- デモに載せるのは、単体アプリ、ビルドした JS、サンプル 2 冊（`novel.epub` と `fixed.epub`）だけ。攻撃用コンテンツの入った `general.epub`、型定義、ソースマップは載せない。
+- デモには、サンプルの形式の元になったツールの名前を出さない（デモはビューアのもの）。そのためデモ用の小説は、`nepub.epub` と同じ内容を別のファイル名・タイトルで生成している。載せるファイルと、名前が出ていないことは `test/app.spec.ts` で確かめている。
+- 公開先のパスは `/epub-viewer/` の下になるので、デモの中のリンクはすべて相対パスで書く（`app/?url=../samples/novel.epub`）。
+- ワークフローは手元では動かせない。変えたときは、同じイメージでまっさらなコピーに対して `npm ci && npm test` を通して確かめる（追跡していないファイルに頼っていないことが分かる）。
+
 ## サプライチェーン対策
 
 - devDependencies は `typescript` と `@playwright/test` のみ（どちらも公式パッケージ）。
 - `.npmrc`: `ignore-scripts=true`（install スクリプトを実行しない）、`min-release-age=7`（公開後 7 日未満の版を入れない）、`save-exact=true`（バージョン完全固定）。
 - `package-lock.json` をコミットし、integrity（sha512）で内容を固定。インストールは `npm ci`。
-- Docker イメージは digest（`@sha256:...`）で固定。
+- Docker イメージは digest（`@sha256:...`）で固定。GitHub Actions も同じイメージを使い、Action はコミットの SHA で固定する（公開から 7 日以上たった版。`git ls-remote --tags https://github.com/actions/<名前>` で SHA を確かめる）。ワークフローの権限は読み取りだけにし、公開の権限は deploy ジョブだけに付ける。
 - 依存を追加・更新するときは:
   1. 本当に必要か（自前で数十行で書けないか）を検討する
   2. 公式・実績のあるパッケージか、メンテナ・ダウンロード数・依存ツリーを確認する
   3. `npm view <pkg> time` で公開日を確認し、7 日以上経った版を exact 指定する
   4. `package-lock.json` の差分を確認する
-  5. `@playwright/test` を更新したら `compose.yaml` のイメージのタグと digest も揃える（`docker pull mcr.microsoft.com/playwright:vX.Y.Z-noble` → `docker inspect --format '{{index .RepoDigests 0}}' ...`）
+  5. `@playwright/test` を更新したら `compose.yaml` と `.github/workflows/deploy.yml` のイメージのタグと digest も揃える（`docker pull mcr.microsoft.com/playwright:vX.Y.Z-noble` → `docker inspect --format '{{index .RepoDigests 0}}' ...`）
 
 ## 設計メモ・ハマりどころ
 
