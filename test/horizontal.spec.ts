@@ -255,7 +255,7 @@ test.describe('general EPUB 2 (horizontal)', () => {
 
   test('shows the settings for text only', async ({ page }) => {
     await openSettings(page)
-    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '表示方向', '見開き', 'テーマ'])
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '余白', '表示方向', '見開き', 'テーマ'])
   })
 
   test('lays out horizontal text in two columns for a spread', async ({ page }) => {

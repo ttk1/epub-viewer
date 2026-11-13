@@ -132,9 +132,9 @@ test.describe('nepub-style EPUB (vertical)', () => {
 
   test('shows the setting for spreads only where it does something: not for vertical text', async ({ page }) => {
     await openSettings(page)
-    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '表示方向', 'テーマ'])
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '余白', '表示方向', 'テーマ'])
     await setting(page, 'writingMode', 'horizontal')
-    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '表示方向', '見開き', 'テーマ'])
+    await expect(page.locator('.settings .row:visible > :first-child')).toHaveText(['文字サイズ', 'フォント', '行間', '表示幅', '余白', '表示方向', '見開き', 'テーマ'])
   })
 
   test('a click on the page closes an open menu, without turning the page', async ({ page }) => {
@@ -227,6 +227,19 @@ test.describe('nepub-style EPUB (vertical)', () => {
     expect(await pageCount(page)).toBeGreaterThan(before)
     // nepub sets the line height of text set upright in a vertical line itself; that is kept.
     expect(await evaluate(page, () => getComputedStyle(document.querySelector('.tcy')!).lineHeight)).toBe('45px')
+  })
+
+  test('changes the page margin, and keeps the choice', async ({ page }) => {
+    const padding = () => evaluate(page, () => getComputedStyle(document.documentElement).padding)
+    await expect(page.locator('input[name=margin]:checked')).toHaveValue('32')
+    expect(await padding()).toBe('32px')
+    const before = await pageCount(page)
+    await setting(page, 'margin', '96')
+    expect(await padding()).toBe('96px')
+    expect(await pageCount(page)).toBeGreaterThan(before) // less room for the text
+    await page.reload()
+    await expect(page.locator('.progress')).toHaveText(/\d+ \/ \d+/)
+    expect(await padding()).toBe('96px')
   })
 
   test('larger font makes more pages', async ({ page }) => {

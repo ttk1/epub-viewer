@@ -13,6 +13,8 @@ export interface ReaderSettings {
   lineHeight: number
   /** Page width in px, 0 = full width. */
   maxWidth: number
+  /** Page margin in px. */
+  margin: number
   writingMode: ViewerOptions['writingMode']
   /** Two pages (fixed layout) or two columns (horizontal text) side by side. */
   spread: ViewerOptions['spread']
@@ -31,7 +33,7 @@ export interface ReaderOptions {
   storageKey: string
   /** Initial settings, used until the user changes them. */
   settings: Partial<ReaderSettings>
-  /** Other EpubViewer options (e.g. `keyboard`, `wheel`, `cooldown`). Look-related ones come from the settings. */
+  /** Other EpubViewer options (e.g. `keyboard`, `wheel`, `cooldown`). Look-related ones, the margin among them, come from the settings. */
   viewer: Partial<ViewerOptions>
 }
 
@@ -51,6 +53,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   fontSize: 45, // large enough to read comfortably at a distance
   lineHeight: 0,
   maxWidth: 0,
+  margin: 32,
   writingMode: 'auto',
   spread: 'auto',
   direction: 'auto',
@@ -92,6 +95,7 @@ const TOOLBAR = `
         ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
         ${choices('lineHeight', '行間', [[0, '本の指定'], [1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
         ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
+        ${choices('margin', '余白', [[16, '狭い'], [32, '標準'], [64, '広い'], [96, 'とても広い']])}
         ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       </div>
       <div class="not-vertical">
@@ -199,7 +203,7 @@ const STYLE = `
 
 /**
  * A ready-made reader UI: toolbar (table of contents, progress, and a settings menu for font size,
- * font, line height, width, writing mode, spread, direction and theme) + EpubViewer, with settings
+ * font, line height, width, margin, writing mode, spread, direction and theme) + EpubViewer, with settings
  * and reading positions saved in a storage. Add your own controls to `toolbar`, and use `viewer`
  * for events and navigation.
  */
@@ -377,6 +381,7 @@ export class EpubReader {
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       maxWidth: settings.maxWidth,
+      margin: settings.margin,
       writingMode: settings.writingMode,
       spread: settings.spread,
       direction: settings.direction,

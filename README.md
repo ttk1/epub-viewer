@@ -60,6 +60,7 @@ docker compose up
 | フォント | 小説など | 明朝（既定）/ ゴシック / 本の指定 |
 | 行間 | 小説など | 本の指定（既定）/ 狭い / 標準 / 広い / とても広い。選んだ値は本の指定より優先する |
 | 表示幅 | 小説など | 全幅（既定）〜 600px。ページを画面中央の指定幅に収める |
+| 余白 | 小説など | 狭い / 標準（既定）/ 広い / とても広い。ページの周りの余白（16〜96px）。2 段組みでは段の間も広がる |
 | 表示方向 | 小説など | 自動（本の指定）/ 縦書き / 横書き |
 | 見開き | 漫画と、横書きで表示している本 | 自動 / する / しない。漫画は 2 ページ並べ、横書きの本は 2 段組みにする。自動は画面に余裕があるときだけ。縦書きで表示している間は出ない（1 ページが幅いっぱいなので） |
 | 開き方向 | 漫画など | 本の指定 / 右開き / 左開き。右開きの指定が抜けている漫画に |
@@ -371,8 +372,8 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | --- | --- | --- |
 | `storage` | localStorage | 設定と読書位置の保存先。`getItem(key)` / `setItem(key, value)` を持つもの。`null` で保存しない |
 | `storageKey` | `'epub-viewer'` | 保存キーの接頭辞。設定は `<storageKey>:settings`、読書位置は `<storageKey>:position:<キー>` に保存される |
-| `settings` | – | 初期設定 `{ theme, font, fontSize, lineHeight, maxWidth, writingMode, spread, direction }`。`theme` は `'system'` / `'light'` / `'sepia'` / `'dark'`、`font` は `'mincho'` / `'gothic'` / `'book'`、それ以外は `EpubViewer` の同名のオプションと同じ。既定は OS に合わせたテーマ・明朝・45px・それ以外は `EpubViewer` の既定値。保存されるのはユーザーが変えた項目だけで、それ以外はここで指定した値が使われ続ける |
-| `viewer` | – | 内部の `EpubViewer` に渡すオプション（`keyboard`・`click`・`wheel`・`swipe`・`cooldown`・`margin`）。見た目のオプションは設定から決まる |
+| `settings` | – | 初期設定 `{ theme, font, fontSize, lineHeight, maxWidth, margin, writingMode, spread, direction }`。`theme` は `'system'` / `'light'` / `'sepia'` / `'dark'`、`font` は `'mincho'` / `'gothic'` / `'book'`、それ以外は `EpubViewer` の同名のオプションと同じ。既定は OS に合わせたテーマ・明朝・45px・それ以外は `EpubViewer` の既定値。保存されるのはユーザーが変えた項目だけで、それ以外はここで指定した値が使われ続ける |
+| `viewer` | – | 内部の `EpubViewer` に渡すオプション（`keyboard`・`click`・`wheel`・`swipe`・`cooldown`）。見た目のオプション（余白の `margin` を含む）は設定から決まる |
 
 | メソッド・プロパティ | 説明 |
 | --- | --- |
