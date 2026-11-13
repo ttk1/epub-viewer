@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "license": "MIT",
-  "description": "Browser EPUB viewer library for vertical text and fixed-layout books (manga), plus a standalone reader app",
+  "description": "Browser EPUB viewer library for text in vertical or horizontal writing and fixed-layout books (manga), plus a standalone reader app",
   "type": "module",
   "exports": {
     ".": {
