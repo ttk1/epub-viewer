@@ -96,6 +96,40 @@ test.describe('on a phone', () => {
 
 })
 
+// As in books made from the template of the EBPAJ guide: white on black for a heading, a grey
+// background for code. The viewer sets the color of the text, but not these backgrounds.
+test('text on a background that the book gives it keeps the color of the book, in any theme', async ({ page }) => {
+  const head = '<style>p { color: #000000; } .inverse { color: #ffffff; background: #000000; } .bg-silver { background-color: #c0c0c0; } .tint { background-color: rgba(0, 0, 0, 0.05); }</style>'
+  const body =
+    '<p id="plain">text <span id="code" class="bg-silver">j$.</span> <span id="tint" class="tint">tinted</span></p>' +
+    '<p id="inverse" class="inverse">heading <b id="bold">bold</b></p><p class="bg-silver"><a id="link" href="http://example.com/">link</a></p>'
+  const colors = await open(page, makeBook([['a.xhtml', xhtml(body, head)]], PAGE, SPINE), (viewer, _book, doc) => {
+    const read = () => Object.fromEntries(['plain', 'code', 'tint', 'inverse', 'bold', 'link'].map((id) => [id, doc.defaultView!.getComputedStyle(doc.getElementById(id)!).color]))
+    const light = read()
+    viewer.setOptions({ theme: { background: '#000000', color: '#acacac', link: '#7fa3d9' } })
+    return { light, dark: read() }
+  })
+  const [black, white] = ['rgb(0, 0, 0)', 'rgb(255, 255, 255)']
+  // The text of the page, and text on a mere tint, are in the color of the theme.
+  expect(colors).toMatchObject({
+    light: { plain: 'rgb(26, 26, 26)', tint: 'rgb(26, 26, 26)', code: black, inverse: white, bold: white },
+    dark: { plain: 'rgb(172, 172, 172)', tint: 'rgb(172, 172, 172)', code: black, inverse: white, bold: white },
+  })
+  // Nor is a link there in the color that the theme has for links, which is made for the background of the theme.
+  const { light, dark } = colors as Record<string, Record<string, string>>
+  expect(light.link).not.toBe('rgb(26, 95, 180)')
+  expect(dark.link).toBe(light.link)
+})
+
+test('code keeps its monospace font when the fonts of the book are replaced', async ({ page }) => {
+  const body = '<p id="text">text <span id="code" style="font-family: monospace">j$.</span></p><pre id="pre">var foo = <b id="bold">1</b></pre><p id="gothic" style="font-family: sans-serif">見出し</p>'
+  const fonts = await open(page, makeBook([['a.xhtml', xhtml(body)]], PAGE, SPINE), (viewer, _book, doc) => {
+    viewer.setOptions({ fontFamily: 'serif' })
+    return Object.fromEntries(['text', 'code', 'pre', 'bold', 'gothic'].map((id) => [id, doc.defaultView!.getComputedStyle(doc.getElementById(id)!).fontFamily]))
+  })
+  expect(fonts).toEqual({ text: 'serif', gothic: 'serif', code: 'monospace', pre: 'monospace', bold: 'monospace' })
+})
+
 test('vertical text and upright numbers that are set with the -webkit- prefix only', async ({ page }) => {
   const css = '<style>html { -webkit-writing-mode: vertical-rl; } .tcy { -webkit-text-combine: horizontal; }</style>'
   const bytes = makeBook([['a.xhtml', xhtml('<p>平成<span class="tcy">12</span>年</p>', css)]], PAGE, SPINE, 'rtl')

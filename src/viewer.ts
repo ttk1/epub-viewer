@@ -2,7 +2,7 @@ import { resolvePath, type Book } from './book.ts'
 import { fitScale, pageSize, pairPages, twoPages } from './fixed.ts'
 import { Input } from './input.ts'
 import { DEFAULT_OPTIONS, type ViewerOptions } from './options.ts'
-import { firstText, pageOf, paginate, prepare, scrolledPage, scrollToPage, type Pagination } from './reflow.ts'
+import { firstText, keepBookStyles, pageOf, paginate, prepare, scrolledPage, scrollToPage, type Pagination } from './reflow.ts'
 
 /** A position in a book that survives re-layout (font size / window size changes). */
 export interface BookLocation {
@@ -545,6 +545,7 @@ export class EpubViewer extends EventTarget {
       // hidden frame, and gives "": it is read again at the next layout, when the frame is shown.
       this.#style.textContent = ''
       this.#bookWritingMode = doc.defaultView!.getComputedStyle(doc.body ?? doc.documentElement).writingMode
+      if (this.#bookWritingMode) keepBookStyles(doc)
     }
     const { maxWidth } = this.#options
     this.#styleFrame(this.#frame, `${FILL};max-width:${maxWidth > 0 ? `${maxWidth}px` : 'none'}`, FILL)

@@ -37,6 +37,33 @@ export function prepare(doc: Document): void {
   for (const svg of doc.querySelectorAll('svg[preserveAspectRatio="none"]')) svg.removeAttribute('preserveAspectRatio')
 }
 
+/** Marks an element that has a background of its own: it, and what is in it, keep the colors of the book. */
+const OWN_COLORS = 'data-epub-viewer-colors'
+/** Marks an element in a monospace font, which it keeps. */
+const OWN_FONT = 'data-epub-viewer-font'
+
+/**
+ * Finds what the viewer must not give its own colors and font, as it does to the rest of the text.
+ * Once for a document, while the rules of paginate() are not in it: what is read is what the book says.
+ *
+ * - Text on a background that the book gives it. The background stays as it is, and the color of
+ *   the theme can be unreadable on it: a heading in white on black became black on black, and
+ *   code on light grey could not be read in a dark theme. A mere tint is not such a background.
+ * - Code. The font of the reader's choice is for the text; in it, code is not told from the text.
+ */
+export function keepBookStyles(doc: Document): void {
+  // The opacity of a color as browsers give it: "rgba(r, g, b, a)", or "... / a)" in other notations.
+  const alpha = (color: string) => Number(color.match(/^rgba\(.*,\s*([\d.]+)\)$/)?.[1] ?? color.match(/\/\s*([\d.]+)\)$/)?.[1] ?? 1)
+  for (const el of doc.body?.querySelectorAll<HTMLElement>('*') ?? []) {
+    const { backgroundColor, color, fontFamily } = doc.defaultView!.getComputedStyle(el)
+    if (alpha(backgroundColor) >= 0.5) {
+      el.setAttribute(OWN_COLORS, '')
+      el.style.setProperty('color', color, 'important') // the one of the book, where the theme's would be inherited
+    }
+    if (/\bmonospace\b/.test(fontFamily)) el.setAttribute(OWN_FONT, '')
+  }
+}
+
 /**
  * Lays out `doc` in pages of `width` × `height`, by the rules written into `style` (a style
  * element in `doc`). `bookWritingMode` is the writing mode that the book itself declares.
@@ -97,9 +124,10 @@ export function paginate(
       margin: 0 !important;
       background: transparent !important;
     }
-    ${fontFamily ? `body, body * { font-family: ${fontFamily} !important; }` : ''}
-    body :not(a) { color: inherit !important; }
-    a:link, a:visited { color: ${theme.link} !important; }
+    /* Not what keepBookStyles() has marked: code, and text on a background of the book. */
+    ${fontFamily ? `body, body :not([${OWN_FONT}]) { font-family: ${fontFamily} !important; }` : ''}
+    body :not(a):not([${OWN_COLORS}], [${OWN_COLORS}] *) { color: inherit !important; }
+    :is(a:link, a:visited):not([${OWN_COLORS}], [${OWN_COLORS}] *) { color: ${theme.link} !important; }
     img, svg, video {
       /* No larger than a page, nor than the room that is left by what they are in (e.g. a <figure>, which has margins). */
       max-width: ${vertical ? `${w - 2 * m}px` : `min(100%, ${columnWidth}px)`} !important;
