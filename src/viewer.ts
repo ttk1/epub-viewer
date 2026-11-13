@@ -1,8 +1,9 @@
 import { resolvePath, type Book } from './book.ts'
 import { fitScale, pageSize, pairPages, twoPages } from './fixed.ts'
 import { Input } from './input.ts'
+import { keepBookStyles } from './look.ts'
 import { DEFAULT_OPTIONS, type ViewerOptions } from './options.ts'
-import { firstText, keepBookStyles, pageOf, paginate, prepare, scrolledPage, scrollToPage, type Pagination } from './reflow.ts'
+import { firstText, pageOf, paginate, prepare, scrolledPage, scrollToPage, type Pagination } from './reflow.ts'
 
 /** A position in a book that survives re-layout (font size / window size changes). */
 export interface BookLocation {

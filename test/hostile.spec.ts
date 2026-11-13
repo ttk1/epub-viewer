@@ -192,6 +192,17 @@ for (const [name, head] of [
   })
 }
 
+// A <form> has its controls as properties by their names, over its own: the viewer marks the
+// elements that have a background or a border of their own, and with the methods of the form
+// itself that threw, so that the book did not open.
+test('lays out a book in which forms with a background or a border have controls named after their own methods', async ({ page }) => {
+  const head = '<style>.code { background: #ffffff; font-family: monospace; } .frame { border: 1px solid #000000; }</style>'
+  const controls = '<input name="style"/><input name="setAttribute"/><input name="closest"/>'
+  const forms = `<form class="code">${controls}</form><form class="frame">${controls}</form>`
+  expect(await open(page, makeBook([['a.xhtml', xhtml(forms + longText, head)]], PAGE, '<itemref idref="a"/>'))).toBe('')
+  expect(await page.evaluate(() => (window as any).relocates.pop().pages)).toBeGreaterThan(5)
+})
+
 // In a document with dir="rtl", the browser scrolls to the left of the start: the page number was negative.
 test('does not report a page before the first when the browser scrolls a document that goes from right to left', async ({ page }) => {
   const source = xhtml(`${longText}<p><a id="late" href="#x">late</a></p>`).replace('<html ', '<html dir="rtl" ')

@@ -3,6 +3,7 @@
  * html element is the multi-column container; a page turn scrolls it by one page. For vertical
  * text the columns stack downwards, so the pages follow each other downwards as well.
  */
+import { darkPageRules, lookRules } from './look.ts'
 import type { ViewerOptions } from './options.ts'
 
 /** How a document is split into pages. */
@@ -37,57 +38,6 @@ export function prepare(doc: Document): void {
   for (const svg of doc.querySelectorAll('svg[preserveAspectRatio="none"]')) svg.removeAttribute('preserveAspectRatio')
 }
 
-/** Marks an element that has a background of its own: it, and what is in it, keep the colors of the book. */
-const OWN_COLORS = 'data-epub-viewer-colors'
-/** Marks an element in a monospace font, which it keeps. */
-const OWN_FONT = 'data-epub-viewer-font'
-/** Its value where the book justifies the element like the text around it: a line of code that wraps would have its spaces stretched. */
-const JUSTIFIED = 'justified'
-/** Marks an element whose borders are drawn in a dark color: on a dark page, they take the color of the text. */
-const DARK_BORDER = 'data-epub-viewer-border'
-/**
- * Small images of characters that fonts do not have, by the class that the EBPAJ guide gives them:
- * black on white (or on nothing), in a line of text.
- */
-const GLYPHS = 'img[class*="gaiji"]'
-
-// Colors as browsers give them in computed styles.
-/** The opacity: "rgba(r, g, b, a)", or "... / a)" in other notations. */
-const alpha = (color: string) => Number(color.match(/^rgba\(.*,\s*([\d.]+)\)$/)?.[1] ?? color.match(/\/\s*([\d.]+)\)$/)?.[1] ?? 1)
-/** How bright, from 0 to 1 (1 for a notation that is not read, or no color at all). */
-const brightness = (color: string) => {
-  const [r, g, b] = color.startsWith('rgb') ? (color.match(/[\d.]+/g) ?? []).map(Number) : []
-  return b === undefined ? 1 : (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-}
-/** What cannot be seen on a dark page. Red, or a mid grey, can. */
-const DARK = 0.2
-
-/**
- * Finds what the viewer must not give its own colors and font, as it does to the rest of the text.
- * Once for a document, while the rules of paginate() are not in it: what is read is what the book says.
- *
- * - Text on a background that the book gives it. The background stays as it is, and the color of
- *   the theme can be unreadable on it: a heading in white on black became black on black, and
- *   code on light grey could not be read in a dark theme. A mere tint is not such a background.
- * - Code. The font of the reader's choice is for the text; in it, code is not told from the text.
- *
- * And what is drawn for a white page, and lost on a dark one: rules and frames in black (not those
- * on a background of the book, which are seen on it).
- */
-export function keepBookStyles(doc: Document): void {
-  for (const el of doc.body?.querySelectorAll<HTMLElement>('*') ?? []) {
-    const style = doc.defaultView!.getComputedStyle(el)
-    if (alpha(style.backgroundColor) >= 0.5) {
-      el.setAttribute(OWN_COLORS, '')
-      el.style.setProperty('color', style.color, 'important') // the one of the book, where the theme's would be inherited
-    } else if (!Element.prototype.closest.call(el, `[${OWN_COLORS}]`)) {
-      const borders = (['Top', 'Right', 'Bottom', 'Left'] as const).filter((side) => parseFloat(style[`border${side}Width`]) > 0 && alpha(style[`border${side}Color`]) >= 0.5)
-      if (borders.length && borders.every((side) => brightness(style[`border${side}Color`]) < DARK)) el.setAttribute(DARK_BORDER, '')
-    }
-    if (/\bmonospace\b/.test(style.fontFamily)) el.setAttribute(OWN_FONT, style.textAlign === 'justify' ? JUSTIFIED : '')
-  }
-}
-
 /**
  * Lays out `doc` in pages of `width` × `height`, by the rules written into `style` (a style
  * element in `doc`). `bookWritingMode` is the writing mode that the book itself declares.
@@ -100,7 +50,7 @@ export function paginate(
   bookWritingMode: string,
   options: ViewerOptions,
 ): Pagination {
-  const { theme, fontFamily, fontSize, lineHeight, margin: m, spread } = options
+  const { fontSize, lineHeight, margin: m, spread } = options
   const [w, h] = [Math.floor(width), Math.floor(height)]
   const writingMode =
     options.writingMode === 'auto' ? bookWritingMode : options.writingMode === 'vertical' ? 'vertical-rl' : 'horizontal-tb'
@@ -138,32 +88,12 @@ export function paginate(
          Panning and pinch zoom stay as they are. */
       touch-action: manipulation !important;
       font-size: ${fontSize}px !important;
-      color: ${theme.color} !important;
-      /* Not transparent: browsers paint an opaque (white) backdrop behind an iframe whose
-         color-scheme differs from the host page's, e.g. a dark host page. */
-      background: ${theme.background} !important;
     }
     body {
       writing-mode: ${writingMode} !important;
       margin: 0 !important;
-      /* The colors of the page are the theme's. With the color too: a book that sets both on
-         <body> (black on white) would be left with its black on a dark page. */
-      background: transparent !important;
-      color: inherit !important;
     }
-    /* Not what keepBookStyles() has marked: code, and text on a background of the book. */
-    ${fontFamily ? `body, body :not([${OWN_FONT}]) { font-family: ${fontFamily} !important; }` : ''}
-    [${OWN_FONT}="${JUSTIFIED}"] { text-align: start !important; }
-    body :not(a):not([${OWN_COLORS}], [${OWN_COLORS}] *) {
-      color: inherit !important;
-      /* What is drawn with the text, in a color that the book may set apart from it. */
-      -webkit-text-emphasis-color: currentcolor !important;
-      text-emphasis-color: currentcolor !important;
-      text-decoration-color: currentcolor !important;
-    }
-    :is(a:link, a:visited):not([${OWN_COLORS}], [${OWN_COLORS}] *) { color: ${theme.link} !important; }
-    /* The white around a character does not show on a page of another color (e.g. sepia). */
-    ${GLYPHS} { mix-blend-mode: multiply !important; }
+    ${lookRules(options)}
     img, svg, video {
       /* No larger than a page, nor than the room that is left by what they are in (e.g. a <figure>, which has margins). */
       max-width: ${vertical ? `${w - 2 * m}px` : `min(100%, ${columnWidth}px)`} !important;
@@ -184,16 +114,7 @@ export function paginate(
   // without the second column where there is none. The last page could not be scrolled to as a
   // whole, and was shown shifted. A mark at the end of the last page gives it the room.
   const [along, across] = vertical ? ['top', 'left'] : ['left', 'top']
-  // On a dark page, what the book draws in black for a white one is lost: borders take the color
-  // of the text, and images of characters are turned to white on black, of which only the white shows.
-  // (The color of the theme is any CSS color: read as the browser has resolved it.)
-  const dark = brightness(doc.defaultView!.getComputedStyle(doc.documentElement).backgroundColor) < 0.5
-  if (dark) {
-    style.textContent += `
-    [${DARK_BORDER}] { border-color: currentcolor !important; }
-    ${GLYPHS}:not([${OWN_COLORS}] *) { filter: invert(1) !important; mix-blend-mode: screen !important; }`
-  }
-  style.textContent += `
+  style.textContent += `${darkPageRules(doc)}
     html::after {
       content: '' !important; display: block !important; position: absolute !important;
       ${along}: ${pages * pageSize - 1}px !important; ${across}: 0 !important;

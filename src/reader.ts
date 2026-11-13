@@ -191,8 +191,8 @@ const STYLE = `
   /* On a narrow screen the room goes to the title; the bar under the toolbar shows the same. */
   @container (max-width: 480px) { .epub-reader .percent { display: none; } }
   .epub-reader .panel {
-    position: absolute; top: calc(100% + 6px); box-sizing: border-box;
-    width: min(26em, 100% - 16px); max-height: 70vh; max-height: calc(100cqh - 100% - 14px); overflow: auto;
+    position: absolute; top: calc(100% + 6px); z-index: 1; /* over the thumb of the slider, which reaches as far down */
+    box-sizing: border-box; width: min(26em, 100% - 16px); max-height: 70vh; max-height: calc(100cqh - 100% - 14px); overflow: auto;
     padding: 6px; border: 1px solid var(--line); border-radius: 12px;
     background: var(--bg); box-shadow: 0 2px 6px rgb(0 0 0 / 0.12), 0 12px 32px rgb(0 0 0 / 0.18);
   }
@@ -488,7 +488,7 @@ export class EpubReader {
   #onKeydown = (e: KeyboardEvent): void => {
     // On the slider, the keys turn pages as they do elsewhere. Left to the browser, they move it by
     // a step that differs between browsers (in Firefox, by the whole book).
-    const turn = e.target === this.#part('seek') && !(e.altKey || e.ctrlKey || e.metaKey) && SEEK_KEYS[e.key]
+    const turn = e.target === this.#part('seek') && !(e.altKey || e.ctrlKey || e.metaKey) && Object.hasOwn(SEEK_KEYS, e.key) && SEEK_KEYS[e.key]
     if (turn) {
       e.preventDefault()
       this.viewer[turn]().catch(this.#report)
