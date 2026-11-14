@@ -606,3 +606,119 @@ test('EpubReader offers the choices and the font sizes that the app gives it', a
   await page.locator('.font-down').click()
   await expect(page.locator('.font-size')).toHaveText('23')
 })
+
+test('EpubReader.setChoices() replaces rows of the settings menu, and nothing else', async ({ page }) => {
+  await page.goto('/app/')
+  await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    // Two readers on the page: the second one is not to be touched.
+    document.body.innerHTML = '<div id="a" style="height: 60vh"></div><div id="b" style="height: 40vh"></div>'
+    const reader = new EpubReader(document.querySelector('#a')!, { storageKey: 'set-choices', settings: { fontSize: 30 } })
+    new EpubReader(document.querySelector('#b')!, { storage: null })
+    // What an app adds to the toolbar.
+    reader.toolbar.append(Object.assign(document.createElement('button'), { className: 'added', textContent: '次の話' }))
+    reader.toolbar.querySelector('.title')!.setAttribute('data-site', 'kept')
+    let relocations = 0
+    reader.viewer.addEventListener('relocate', () => relocations++)
+    Object.assign(window, { reader, relocations: () => relocations })
+    await reader.open('/samples/nepub.epub')
+    await reader.viewer.next()
+  })
+  const a = page.locator('#a')
+  const values = (name: string, root = a) => root.locator(`.settings input[name=${name}]`).evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))
+  const chosen = (name: string) => a.locator(`.settings input[name=${name}]:checked`).evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))
+  const rows = () => a.locator('.only-reflowable .row > :first-child').allTextContents()
+  /** What must stay as it is: the place in the book, and the parts of the toolbar that are not replaced. */
+  const state = () => page.evaluate(() => {
+    const { reader, relocations } = window as any
+    const kept = [...reader.toolbar.querySelectorAll('.settings .row')].filter((row: Element) => !row.querySelector('[name=margin], [name=lineHeight]'))
+    const same = ((window as any).kept ??= kept).every((row: Element, i: number) => row === kept[i])
+    return {
+      same,
+      relocations: relocations(),
+      location: reader.viewer.location,
+      toolbar: [...reader.toolbar.children].map((child: Element) => child.className),
+      site: reader.toolbar.querySelector('.title').dataset.site,
+      texts: ['.title', '.pages', '.percent'].map((part) => reader.toolbar.querySelector(part).textContent),
+      seek: reader.toolbar.querySelector('.seek').value,
+      toc: reader.toolbar.querySelectorAll('.toc-list button').length,
+      open: reader.toolbar.querySelector('.settings').open,
+      margin: reader.viewer.options.margin,
+      saved: localStorage.getItem('set-choices:settings'),
+    }
+  })
+  const setChoices = (choices: object) => page.evaluate((choices) => (window as any).reader.setChoices(choices), choices)
+  const setSettings = (settings: object) => page.evaluate((settings) => (window as any).reader.setSettings(settings), settings)
+
+  await a.locator('.settings summary').click()
+  await page.waitForTimeout(300) // relocations of the layout that follows the opening are over
+  const before = await state()
+  expect(before).toMatchObject({ same: true, open: true, margin: 32, saved: null, site: 'kept' })
+  expect(before.toolbar).toContain('added')
+  expect(await rows()).toEqual(['文字サイズ', 'フォント', '行間', '表示幅', '余白', '表示方向'])
+
+  // The choices given are in the menu, with their labels as text; none has the value of the setting.
+  await setChoices({ margin: [[35, '狭い'], [56, '<img src=x onerror="document.title=1">標準'], [112, '"広い"&']] })
+  expect(await values('margin')).toEqual(['35', '56', '112'])
+  expect(await a.locator('.settings input[name=margin] + span').allTextContents()).toEqual(['狭い', '<img src=x onerror="document.title=1">標準', '"広い"&'])
+  await expect(a.locator('.settings img')).toHaveCount(0)
+  expect(await chosen('margin')).toEqual([])
+  // Only that row has changed: no layout, nothing saved, the menu still open, the rest of the toolbar as it was.
+  await page.waitForTimeout(300)
+  expect(await state()).toEqual(before)
+  expect(await rows()).toEqual(['文字サイズ', 'フォント', '行間', '表示幅', '余白', '表示方向'])
+  expect(await values('lineHeight')).toHaveLength(5)
+  expect(await values('margin', page.locator('#b'))).toEqual(['16', '32', '64', '96']) // the other reader
+
+  // The choice with the value of the setting is the one chosen, whichever comes first.
+  await setSettings({ margin: 56 })
+  expect(await chosen('margin')).toEqual(['56'])
+  await setSettings({ margin: 70 })
+  expect(await chosen('margin')).toEqual([])
+  await setChoices({ margin: [[70, 'a'], [90, 'b']] })
+  expect(await chosen('margin')).toEqual(['70'])
+  // A new choice works as any other: it is applied and saved.
+  await a.locator('.settings input[name=margin][value="90"]').check()
+  expect(await state()).toMatchObject({ margin: 90, saved: '{"margin":90}', open: true })
+
+  // Rows without choices are gone, and come back to their places.
+  await setChoices({ margin: [], lineHeight: [] })
+  expect(await rows()).toEqual(['文字サイズ', 'フォント', '表示幅', '表示方向'])
+  await setChoices({ margin: [[90, 'b']] })
+  expect(await rows()).toEqual(['文字サイズ', 'フォント', '表示幅', '余白', '表示方向'])
+  expect(await chosen('margin')).toEqual(['90'])
+  await setChoices({ lineHeight: [[0, '本の指定'], [2, '広い']], maxWidth: [], margin: [] })
+  await setChoices({ maxWidth: [[0, '全幅']], margin: [[90, 'b'], [100, 'c']] })
+  expect(await rows()).toEqual(['文字サイズ', 'フォント', '行間', '表示幅', '余白', '表示方向'])
+  expect(await state()).toMatchObject({ same: false, open: true, margin: 90 }) // the row of the width is a new one
+
+  // The focus of someone using the keyboard stays in a row that is replaced: on the choice made, or else the first.
+  const focus = () => page.evaluate(() => [document.activeElement!.getAttribute('name') ?? document.activeElement!.localName, (document.activeElement as HTMLInputElement).value ?? ''])
+  await a.locator('.settings input[name=margin][value="90"]').focus()
+  await setChoices({ margin: [[80, 'a'], [90, 'b'], [100, 'c']] })
+  expect(await focus()).toEqual(['margin', '90'])
+  await setChoices({ margin: [[10, 'a'], [20, 'b'], [30, 'c']] })
+  expect(await focus()).toEqual(['margin', '10'])
+  await page.keyboard.press('ArrowRight') // and the keys go on working there
+  expect(await chosen('margin')).toEqual(['20'])
+  expect((await state()).margin).toBe(20)
+  // The focus in another row is left alone.
+  await a.locator('.settings input[name=writingMode][value=auto]').focus()
+  await setChoices({ margin: [[20, 'b']] })
+  expect(await focus()).toEqual(['writingMode', 'auto'])
+  // A row that goes away leaves the focus on the button of the menu, from where Esc closes it.
+  await a.locator('.settings input[name=margin]').focus()
+  await setChoices({ margin: [] })
+  expect(await focus()).toEqual(['summary', ''])
+  expect((await state()).open).toBe(true)
+  await page.keyboard.press('Escape')
+  await expect(a.locator('.settings .panel')).toBeHidden()
+
+  // After destroy(), a call does nothing.
+  expect(await page.evaluate(() => {
+    const { reader } = window as any
+    reader.destroy()
+    reader.setChoices({ margin: [[1, 'a']], maxWidth: [] })
+    return document.querySelector('#a')!.childElementCount
+  })).toBe(0)
+})

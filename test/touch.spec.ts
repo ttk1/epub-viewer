@@ -36,6 +36,26 @@ test.describe('on a phone', () => {
     await expect(page.locator('.settings .panel')).toBeHidden()
     await expect(page.locator('.progress')).toHaveText(/^1 \//)
   })
+
+  test('taps pick choices that were put into the settings menu later', async ({ page }) => {
+    await page.goto('/app/')
+    await page.evaluate(async () => {
+      const { EpubReader } = await import('/dist/src/index.js' as string)
+      const root = document.createElement('div')
+      root.style.height = '100vh'
+      document.body.replaceChildren(root)
+      const reader = new EpubReader(root, { storageKey: 'touch-choices' })
+      ;(window as any).reader = reader
+      await reader.open('/samples/nepub.epub')
+    })
+    await page.locator('.settings summary').tap()
+    // While the menu is open, as when the window changes its width.
+    await page.evaluate(() => (window as any).reader.setChoices({ margin: [[35, '狭い'], [56, '標準'], [112, '広い']] }))
+    await page.locator('.settings input[name=margin][value="56"]').tap()
+    await expect(page.locator('input[name=margin]:checked')).toHaveValue('56')
+    expect(await page.evaluate(() => [(window as any).reader.viewer.options.margin, localStorage.getItem('touch-choices:settings')])).toEqual([56, '{"margin":56}'])
+    await expect(page.locator('.settings .panel')).toBeVisible()
+  })
 })
 
 test.describe('swipes on a touch screen', () => {

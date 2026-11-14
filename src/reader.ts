@@ -37,6 +37,7 @@ export interface ReaderOptions {
    * The values that the settings menu offers for line height, width and margin, each as
    * `[value, label]`: for a site whose pages want other steps than those of the reader. A setting
    * that is left out keeps the choices of the reader; one with no choices is not in the menu.
+   * They can be changed later with setChoices().
    */
   choices: Partial<ReaderChoices>
   /** The sizes that the font size buttons go through: from `min` to `max` px, each `step` times the one before. */
@@ -82,6 +83,8 @@ const DEFAULT_CHOICES: ReaderChoices = {
   maxWidth: [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']],
   margin: [[16, '狭い'], [32, '標準'], [64, '広い'], [96, 'とても広い']],
 }
+/** The rows of these settings, in the order of the menu: between the font and the writing mode. */
+const CHOICE_LABELS: Record<keyof ReaderChoices, string> = { lineHeight: '行間', maxWidth: '表示幅', margin: '余白' }
 const DEFAULT_FONT_SIZE_STEPS: FontSizeSteps = { min: 12, max: 120, step: 1.2 } // equal-looking steps at any size
 
 /** Text of the app (a label of its choices), for the HTML of the toolbar. */
@@ -110,8 +113,9 @@ const swatch = ({ background, color }: Theme) => `background:${background};color
 // The two menus are <details>, so they open and close without any code. The settings are in a
 // <form> to keep the radio button groups of several readers on one page apart. Settings that only
 // work for one kind of book (reflowable text, or fixed-layout pages) are shown for that kind only,
-// and the spread not for vertical text.
-const toolbar = (offered: ReaderChoices) => `
+// and the spread not for vertical text. The rows of line height, width and margin are put in by
+// setChoices(), before the row of the writing mode.
+const toolbar = `
   <details class="toc" hidden>
     <summary>目次</summary>
     <div class="panel toc-list"></div>
@@ -132,9 +136,6 @@ const toolbar = (offered: ReaderChoices) => `
           </span>
         </div>
         ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
-        ${choices('lineHeight', '行間', offered.lineHeight)}
-        ${choices('maxWidth', '表示幅', offered.maxWidth)}
-        ${choices('margin', '余白', offered.margin)}
         ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       </div>
       <div class="not-vertical">
@@ -305,7 +306,7 @@ export class EpubReader {
       doc.head.append(Object.assign(doc.createElement('style'), { id: 'epub-reader-style', textContent: STYLE }))
     }
     root.classList.add('epub-reader')
-    root.innerHTML = `<header class="toolbar">${toolbar({ ...DEFAULT_CHOICES, ...offered })}</header><div class="viewer"></div>`
+    root.innerHTML = `<header class="toolbar">${toolbar}</header><div class="viewer"></div>`
     this.#root = root
     this.#storage = storage
     this.#storageKey = storageKey
@@ -345,6 +346,7 @@ export class EpubReader {
     doc.addEventListener('click', this.#dismiss)
     this.#menuObserver.observe(this.toolbar, { attributeFilter: ['open'], subtree: true })
     this.#systemDark.addEventListener('change', this.#apply) // follow the OS while theme is "system"
+    this.setChoices({ ...DEFAULT_CHOICES, ...offered })
     this.#apply()
   }
 
@@ -365,6 +367,39 @@ export class EpubReader {
     this.#settings = { ...this.#settings, ...changes }
     this.#save('settings', { ...this.#load<ReaderSettings>('settings'), ...changes })
     this.#apply()
+  }
+
+  /**
+   * Replaces the choices that the settings menu offers, as the `choices` option gives them: of the
+   * settings given, the others keep theirs. For choices that depend on something that changes (e.g.
+   * margins that grow with the window). Only the menu changes: the settings keep their values (see
+   * setSettings()), and a choice with the value of its setting is shown as chosen.
+   */
+  setChoices(offered: Partial<ReaderChoices>): void {
+    const row = (name: string) => this.toolbar.querySelector(`.settings input[name=${name}]`)?.closest('.row')
+    const names = Object.keys(CHOICE_LABELS) as (keyof ReaderChoices)[]
+    for (const [i, name] of names.entries()) {
+      const options = offered[name]
+      if (!options) continue
+      // Only this row is made anew, not the toolbar: what the app has added to it, and the state of
+      // the menus, stay. A row without choices is not there at all, so one that comes back is put
+      // before the next row that is.
+      const old = row(name)
+      const focused = old?.contains(this.#root.ownerDocument.activeElement)
+      const after = old ?? [...names.slice(i + 1), 'writingMode'].map(row).find(Boolean)
+      after?.insertAdjacentHTML('beforebegin', choices(name, CHOICE_LABELS[name], options))
+      old?.remove()
+      const made = row(name)
+      this.#showChosen(made?.querySelectorAll('input') ?? [])
+      // The focus was in the row (of someone using the keyboard) and would be nowhere now: it goes to
+      // where Tab would have entered the new row, or, without that row, to the button of the menu.
+      if (focused) (made?.querySelector<HTMLElement>(':checked') ?? made?.querySelector('input') ?? this.toolbar.querySelector<HTMLElement>('.settings summary'))?.focus({ preventScroll: true })
+    }
+  }
+
+  /** Shows the radio buttons with the value of their setting as chosen. */
+  #showChosen(inputs: Iterable<HTMLInputElement>): void {
+    for (const input of inputs) input.checked = input.value === String(this.#settings[input.name as keyof ReaderSettings])
   }
 
   /**
@@ -437,9 +472,7 @@ export class EpubReader {
     style.setProperty('--bg', theme.background)
     style.setProperty('--fg', theme.color)
     style.colorScheme = name === 'dark' ? 'dark' : 'light' // scroll bars etc.
-    for (const input of this.toolbar.querySelectorAll<HTMLInputElement>('.settings input')) {
-      input.checked = input.value === String(settings[input.name as keyof ReaderSettings])
-    }
+    this.#showChosen(this.toolbar.querySelectorAll<HTMLInputElement>('.settings input'))
     this.#part('font-size').textContent = String(settings.fontSize)
     this.viewer.setOptions({
       theme,

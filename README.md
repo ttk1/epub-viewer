@@ -377,13 +377,14 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | `storageKey` | `'epub-viewer'` | 保存キーの接頭辞。設定は `<storageKey>:settings`、読書位置は `<storageKey>:position:<キー>` に保存される |
 | `settings` | – | 初期設定 `{ theme, font, fontSize, lineHeight, maxWidth, margin, writingMode, spread, direction }`。`theme` は `'system'` / `'light'` / `'sepia'` / `'dark'`、`font` は `'mincho'` / `'gothic'` / `'book'`、それ以外は `EpubViewer` の同名のオプションと同じ。既定は OS に合わせたテーマ・明朝・45px・それ以外は `EpubViewer` の既定値。保存されるのはユーザーが変えた項目だけで、それ以外はここで指定した値が使われ続ける |
 | `viewer` | – | 内部の `EpubViewer` に渡すオプション（`keyboard`・`click`・`wheel`・`swipe`・`cooldown`）。見た目のオプション（余白の `margin` を含む）は設定から決まる |
-| `choices` | – | 設定メニューに並べる選択肢。`{ lineHeight, maxWidth, margin }` のうち変えたいものに、`[値, ラベル]` の配列を渡す（例: `{ margin: [[0, 'なし'], [32, '標準'], [128, '広い']] }`）。値の意味は `EpubViewer` の同名のオプションと同じ。渡さなかった設定は既定の選択肢のまま。空の配列を渡した設定は、メニューに出ない（幅をサイト側で決めている場合など） |
+| `choices` | – | 設定メニューに並べる選択肢。`{ lineHeight, maxWidth, margin }` のうち変えたいものに、`[値, ラベル]` の配列を渡す（例: `{ margin: [[0, 'なし'], [32, '標準'], [128, '広い']] }`）。値の意味は `EpubViewer` の同名のオプションと同じ。渡さなかった設定は既定の選択肢のまま。空の配列を渡した設定は、メニューに出ない（幅をサイト側で決めている場合など）。後から `setChoices()` で入れ替えられる |
 | `fontSizeSteps` | `{ min: 12, max: 120, step: 1.2 }` | 文字サイズのボタン（A− / A＋）で変えられる範囲（px）と、1 回で何倍にするか。変えたいものだけ渡せばよい。範囲はボタンにだけ効く: `settings` や `setSettings()`、保存された設定の値は範囲の外でもそのまま使われ、次にボタンを押したときに範囲の中へ入る |
 
 | メソッド・プロパティ | 説明 |
 | --- | --- |
 | `open(source, { key?, location? })` | 本を開いて表示し、`Book` を返す。`location` は `goTo()` の `target` と同じで、省略すると保存された位置（なければ先頭）から。`key` は読書位置の保存キー。読み込みが終わる前にもう一度呼ぶと後の呼び出しが優先され、どちらの呼び出しも後の本を返す。開けなかったとき（EPUB でない、表示できるページがない、など）は reject され、前の本を表示し続ける |
 | `setSettings(changes)` | 設定を変える（例: `reader.setSettings({ theme: 'sepia' })`）。ツールバーで変えたときと同じく表示に反映され、保存される |
+| `setChoices(choices)` | 設定メニューの選択肢を入れ替える（例: ウィンドウの幅に合わせて `reader.setChoices({ margin: [[35, '狭い'], [56, '標準'], [112, '広い']] })`）。引数は `choices` オプションと同じで、渡した設定の選択肢だけが置き換わり、空の配列を渡した設定はメニューから消える（後の呼び出しで戻せる）。変わるのはメニューだけで、設定の値・表示・保存された内容は変わらない: いまの値と同じ選択肢があればそれが選ばれた状態になり、なければどれも選ばれていない状態になる。値も変えるときは `setSettings()` を合わせて呼ぶ（順番はどちらでもよい）。メニューを開いたままでも呼べる |
 | `settings` | 現在の設定 |
 | `toolbar` | ツールバーの要素。独自のボタンやリンクを追加できる（直下に置いた `button` / `select` / `a` / `label` にはツールバーの見た目が、`span` には文字用の余白が付く。作品名の要素は `.title`）。`hidden` にすると隠れ、その分ページが広がる |
 | `viewer` | 内部の `EpubViewer`。イベントやページ移動に使う |
