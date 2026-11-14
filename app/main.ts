@@ -9,6 +9,13 @@ const label = Object.assign(document.createElement('label'), { textContent: '開
 label.append(input)
 reader.toolbar.prepend(label)
 
+// The page itself takes the background of the theme. A phone shows the color of the page around
+// it as well (behind the status bar and the bars of the browser): white, around a dark book.
+const paint = () => (document.documentElement.style.background = reader.viewer.options.theme.background)
+reader.toolbar.addEventListener('change', paint) // a theme chosen in the menu: the reader has applied it by now
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint) // the theme that follows the OS, likewise
+paint()
+
 async function open(source: BookSource): Promise<void> {
   try {
     const book = await reader.open(source)

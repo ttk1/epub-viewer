@@ -79,6 +79,21 @@ test('a menu opened with the mouse is closed by Escape, and keys do not turn the
   await expect(page.locator('.pages')).toHaveText(/^2 \//)
 })
 
+test('the page around the reader has the background of the theme', async ({ page }) => {
+  // What a phone shows behind its status bar and the bars of the browser.
+  const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor)
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/app/') // before a book is open, too
+  expect(await background()).toBe('rgb(0, 0, 0)')
+  await page.emulateMedia({ colorScheme: 'light' }) // the theme follows the OS
+  await expect.poll(background).toBe('rgb(255, 255, 255)')
+  await page.locator('.settings summary').click()
+  await page.locator('.settings input[name=theme][value=sepia]').check()
+  expect(await background()).toBe('rgb(244, 236, 216)')
+  await page.reload() // the saved theme
+  expect(await background()).toBe('rgb(244, 236, 216)')
+})
+
 test('series example opens the next / previous episode at the book boundaries', async ({ page }) => {
   await page.goto('/examples/series.html')
   const status = page.locator('#status')
