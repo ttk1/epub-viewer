@@ -40,7 +40,7 @@ export interface ReaderOptions {
    */
   choices: Partial<ReaderChoices>
   /** The sizes that the font size buttons go through: from `min` to `max` px, each `step` times the one before. */
-  fontSize: Partial<FontSizeSteps>
+  fontSizeSteps: Partial<FontSizeSteps>
   /** Other EpubViewer options (e.g. `keyboard`, `wheel`, `cooldown`). Look-related ones, the margin among them, come from the settings. */
   viewer: Partial<ViewerOptions>
 }
@@ -82,7 +82,7 @@ const DEFAULT_CHOICES: ReaderChoices = {
   maxWidth: [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']],
   margin: [[16, '狭い'], [32, '標準'], [64, '広い'], [96, 'とても広い']],
 }
-const DEFAULT_FONT_SIZE: FontSizeSteps = { min: 12, max: 120, step: 1.2 } // equal-looking steps at any size
+const DEFAULT_FONT_SIZE_STEPS: FontSizeSteps = { min: 12, max: 120, step: 1.2 } // equal-looking steps at any size
 
 /** Text of the app (a label of its choices), for the HTML of the toolbar. */
 const escapeHtml = (text: unknown) => String(text).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
@@ -275,7 +275,7 @@ export class EpubReader {
   readonly #root: HTMLElement
   readonly #storage: ReaderOptions['storage']
   readonly #storageKey: string
-  readonly #fontSize: FontSizeSteps
+  readonly #fontSizeSteps: FontSizeSteps
   readonly #systemDark = matchMedia('(prefers-color-scheme: dark)')
   #settings: ReaderSettings
   #positionKey = ''
@@ -298,7 +298,7 @@ export class EpubReader {
   /** `root` must have a height; the reader fills it. */
   constructor(
     root: HTMLElement,
-    { storage = defaultStorage(), storageKey = 'epub-viewer', settings = {}, viewer = {}, choices: offered = {}, fontSize = {} }: Partial<ReaderOptions> = {},
+    { storage = defaultStorage(), storageKey = 'epub-viewer', settings = {}, viewer = {}, choices: offered = {}, fontSizeSteps = {} }: Partial<ReaderOptions> = {},
   ) {
     const doc = root.ownerDocument
     if (!doc.getElementById('epub-reader-style')) {
@@ -309,7 +309,7 @@ export class EpubReader {
     this.#root = root
     this.#storage = storage
     this.#storageKey = storageKey
-    this.#fontSize = { ...DEFAULT_FONT_SIZE, ...fontSize }
+    this.#fontSizeSteps = { ...DEFAULT_FONT_SIZE_STEPS, ...fontSizeSteps }
     this.toolbar = root.querySelector('.toolbar')!
     this.viewer = new EpubViewer(root.querySelector('.viewer')!, viewer)
     // Of what is saved, only settings of the right kind: a font size that is not a number could not be changed any more.
@@ -458,7 +458,7 @@ export class EpubReader {
     // The controls of the reader, and buttons added by the app; not other things that it adds (e.g. a text field).
     const control = (e.target as Element).closest<HTMLElement>('button, summary, .settings input, .seek')
     if (control?.matches('.font-up, .font-down')) {
-      const { min, max, step } = this.#fontSize
+      const { min, max, step } = this.#fontSizeSteps
       const size = this.#settings.fontSize
       // By a pixel at least: a small step, rounded, would leave a small size where it is.
       const next = control.matches('.font-up') ? Math.max(size + 1, Math.round(size * step)) : Math.min(size - 1, Math.round(size / step))

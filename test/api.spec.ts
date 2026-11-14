@@ -584,7 +584,7 @@ test('EpubReader offers the choices and the font sizes that the app gives it', a
       storageKey: 'choices',
       settings: { fontSize: 22 },
       choices: { margin: [[0, 'なし'], [200, '<b>広い</b>']], maxWidth: [] },
-      fontSize: { max: 24, step: 1.01 },
+      fontSizeSteps: { max: 24, step: 1.01 },
     })
     ;(window as any).reader = reader
     await reader.open('/samples/nepub.epub')
