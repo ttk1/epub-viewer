@@ -1,6 +1,6 @@
 {
   "name": "epub-viewer",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "license": "MIT",
   "description": "Browser EPUB viewer library for text in vertical or horizontal writing and fixed-layout books (manga), plus a standalone reader app",
