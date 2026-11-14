@@ -37,7 +37,7 @@ export interface ReaderOptions {
    * The values that the settings menu offers for line height, width and margin, each as
    * `[value, label]`: for a site whose pages want other steps than those of the reader. A setting
    * that is left out keeps the choices of the reader; one with no choices is not in the menu.
-   * They can be changed later with setChoices().
+   * Widths that are not narrower than the page are not shown. They can be changed later with setChoices().
    */
   choices: Partial<ReaderChoices>
   /** The sizes that the font size buttons go through: from `min` to `max` px, each `step` times the one before. */
@@ -374,10 +374,11 @@ export class EpubReader {
   }
 
   /**
-   * Replaces the choices that the settings menu offers, as the `choices` option gives them: of the
-   * settings given, the others keep theirs. For choices that depend on something that changes (e.g.
-   * margins that grow with the window). Only the menu changes: the settings keep their values (see
-   * setSettings()), and a choice with the value of its setting is shown as chosen.
+   * Replaces the choices that the settings menu offers. Takes what the `choices` option takes: a
+   * setting that is left out keeps its choices, one with no choices leaves the menu. For choices
+   * that depend on something that changes (e.g. margins that grow with the window). Only the menu
+   * changes: the settings keep their values (see setSettings()), and a choice with the value of its
+   * setting is shown as chosen.
    */
   setChoices(offered: Partial<ReaderChoices>): void {
     const row = (name: string) => this.toolbar.querySelector(`.settings input[name=${name}]`)?.closest('.row')

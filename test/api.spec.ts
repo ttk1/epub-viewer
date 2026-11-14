@@ -628,6 +628,12 @@ test('EpubReader offers only the widths that are narrower than the page', async 
   await page.setViewportSize({ width: 700, height: 400 })
   await expect(row).toBeVisible()
   expect(await offered()).toEqual(['0', '600'])
+  // The arrow keys go from one choice that is shown to the next, past those that are not.
+  await page.locator('.settings input[name=maxWidth][value="0"]').focus()
+  await page.keyboard.press('ArrowRight')
+  expect(await page.evaluate(() => (window as any).reader.settings.maxWidth)).toBe(600)
+  await page.keyboard.press('ArrowLeft') // (not on from the last one: WebKit does not go round to the first)
+  expect(await page.evaluate(() => (window as any).reader.settings.maxWidth)).toBe(0)
   await page.setViewportSize({ width: 1250, height: 700 })
   await expect.poll(offered).toEqual(['0', '1200', '1000', '800', '600'])
   // The same for choices of the app, also when they come later.
