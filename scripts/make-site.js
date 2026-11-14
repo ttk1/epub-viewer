@@ -10,6 +10,7 @@ const INDEX = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>epub-viewer デモ</title>
     <style>
+      :root { color-scheme: light dark; } /* dark where the OS is: the colors are those of the browser */
       body { max-width: 32em; margin: 3em auto; padding: 0 1em; font: 16px/1.8 system-ui, sans-serif; }
     </style>
   </head>

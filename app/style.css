@@ -6,6 +6,11 @@ body {
   /* The page does not scroll, so a touch drag must not start the browser's pull-to-refresh. */
   overscroll-behavior: none;
 }
+/* Until the script has loaded and gives the page the background of the theme: dark where the
+   theme that follows the OS will be (the background of the dark theme), not a flash of white. */
+@media (prefers-color-scheme: dark) {
+  html { background: #000; }
+}
 /* Where to drop a file, shown until a book is open. */
 #placeholder {
   position: fixed;

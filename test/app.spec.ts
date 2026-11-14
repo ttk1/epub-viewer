@@ -2,7 +2,7 @@
 import { expect, test, type Frame } from '@playwright/test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { content, heading, press } from './helpers.ts'
+import { content, heading, pixel, press } from './helpers.ts'
 
 test('the app opens a file dropped on the page, before and after a book is open', async ({ page }) => {
   // The page is a document inside an iframe, so the drop happens there, with a File made there.
@@ -94,6 +94,17 @@ test('the page around the reader has the background of the theme', async ({ page
   expect(await background()).toBe('rgb(244, 236, 216)')
 })
 
+test('the page is dark before its script has loaded, where the OS is', async ({ page }) => {
+  // No flash of white while the script loads: here it never does.
+  await page.route('**/main.js', (route) => route.abort())
+  const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor)
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/app/')
+  expect(await background()).toBe('rgb(0, 0, 0)') // the background of the dark theme
+  await page.emulateMedia({ colorScheme: 'light' })
+  expect(await background()).not.toBe('rgb(0, 0, 0)')
+})
+
 test('series example opens the next / previous episode at the book boundaries', async ({ page }) => {
   await page.goto('/examples/series.html')
   const status = page.locator('#status')
@@ -125,6 +136,14 @@ test('the demo site opens its sample books from its index page', async ({ page }
   await page.goto('/site/')
   await page.getByRole('link', { name: '漫画' }).click()
   await expect(page.locator('.progress')).toHaveText(/^1 \/ 6/)
+})
+
+test('the index page of the demo site is dark where the OS is', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/site/')
+  expect((await pixel(page, 5, 5))[0]).toBeLessThan(80) // as drawn: the color is the browser's own
+  await page.emulateMedia({ colorScheme: 'light' })
+  expect((await pixel(page, 5, 5))[0]).toBe(255)
 })
 
 test('the demo site holds only what it shows', () => {
