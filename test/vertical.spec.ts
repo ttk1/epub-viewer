@@ -156,6 +156,23 @@ test.describe('nepub-style EPUB (vertical)', () => {
     expect(await value()).toBeGreaterThan(dragged)
   })
 
+  test('the line of the slider is filled up to its thumb, wherever that is', async ({ page }) => {
+    // The thumb stays inside the toolbar, so it moves by less than the width of the line. Filled by
+    // the share of its whole width, the line came out on the far side of the thumb near the end.
+    const seek = page.locator('.seek')
+    const box = (await seek.boundingBox())!
+    const y = Math.floor(box.y + box.height / 2) // on the line
+    const filled = async (x: number) => (await pixel(page, x, y))[0] < 100 // the color of the text, on white
+    for (const fraction of [0, 0.5, 0.9, 1]) {
+      await seek.fill(String(fraction))
+      await page.waitForTimeout(300) // the move is over: the thumb and the line are where the page is
+      // The middle of the thumb (a dot of 12px in a box of 28px), from the right.
+      const travelled = Number(await seek.inputValue()) * (box.width - 28) // not 0 at the start: the place is the end of the first page
+      const thumb = box.x + box.width - 14 - travelled
+      expect([fraction, await filled(thumb + 10), await filled(thumb - 10)]).toEqual([fraction, travelled > 10, false])
+    }
+  })
+
   test('jumps via the table of contents', async ({ page }) => {
     // nepub lists chapters, each linking to its first episode, with their episodes below.
     await expect(page.locator('.toc-list button')).toHaveText(['第一章', '第1話　サンプル', '第2話　サンプル', '第二章', '第3話　サンプル'])

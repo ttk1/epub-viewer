@@ -176,13 +176,15 @@ const STYLE = `
      Only its thumb takes the pointer. A touch is given to a control near it: with the whole line
      taking it, a swipe that began at the top of the page moved the slider, and the place was lost. */
   .epub-reader .seek {
-    --fill: linear-gradient(to right, var(--fg) calc(var(--progress, 0) * 100%), transparent 0);
     --thumb: 28px; /* a dot of 12px, with room around it for a finger */
+    /* Between the places where the middle of the thumb is at the start and at the end: half a thumb in from the ends. */
+    --stops: transparent calc(var(--thumb) / 2), var(--fg) 0, var(--fg) calc(var(--thumb) / 2 + var(--progress, 0) * (100% - var(--thumb))), transparent 0;
+    --fill: linear-gradient(to right, var(--stops));
     position: absolute; left: 0; bottom: calc(var(--thumb) / -2); box-sizing: border-box;
     width: 100%; height: var(--thumb); margin: 0; padding: 0;
     -webkit-appearance: none; appearance: none; background: none; pointer-events: none;
   }
-  .epub-reader .seek[dir='rtl'] { --fill: linear-gradient(to left, var(--fg) calc(var(--progress, 0) * 100%), transparent 0); }
+  .epub-reader .seek[dir='rtl'] { --fill: linear-gradient(to left, var(--stops)); }
   .epub-reader .seek::-webkit-slider-runnable-track { height: 2px; background: var(--fill); }
   .epub-reader .seek::-moz-range-track { height: 2px; background: var(--fill); }
   .epub-reader .seek::-webkit-slider-thumb {
