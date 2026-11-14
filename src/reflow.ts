@@ -38,6 +38,51 @@ export function prepare(doc: Document): void {
   for (const svg of doc.querySelectorAll('svg[preserveAspectRatio="none"]')) svg.removeAttribute('preserveAspectRatio')
 }
 
+/** Marks a table that is laid out as blocks, one for each row: see splitLongTables(). */
+const BY_ROWS = 'data-epub-viewer-rows'
+/** The size along the line that a table laid out by rows, and each of its cells, had as a table. */
+const TABLE_SIZE = '--epub-viewer-table-size'
+const TABLE_RULES = `
+  [${BY_ROWS}], [${BY_ROWS}] > * { display: block !important; }
+  [${BY_ROWS}] > tr, [${BY_ROWS}] > * > tr { display: table !important; }
+  [${BY_ROWS}], [${BY_ROWS}] > tr > :is(td, th), [${BY_ROWS}] > * > tr > :is(td, th) { box-sizing: border-box !important; inline-size: var(${TABLE_SIZE}) !important; }`
+
+/**
+ * Lets a table that is longer than a page go on to the next pages. Firefox does not break a table
+ * between columns: all of it was in one, and what did not fit on the page was not shown (the list
+ * of illustrations of a Project Gutenberg book). Such a table is laid out as blocks, each row a
+ * table of its own, with the cells as wide as they were. The lines between the rows of a table
+ * with collapsed borders are doubled by it, and a table with cells over more than one row is left
+ * as it is. So is a table within a table: its row in the outer one is not broken, and each table
+ * laid out so makes what is in it deeper for the browser (500 tables, each in the one before, were
+ * shown without this, and crashed Chromium with it). `room` is the length of a page, without its margins.
+ */
+function splitLongTables(doc: Document, vertical: boolean, room: number): void {
+  // By the methods of Element itself, as in keepBookStyles().
+  const { setAttribute, removeAttribute, closest } = Element.prototype
+  // Tables are measured as the book has them: the pages are of another size at each layout.
+  for (const table of doc.querySelectorAll(`[${BY_ROWS}]`)) removeAttribute.call(table, BY_ROWS)
+  const sizes = (el: Element): [inline: number, block: number] => {
+    const { width, height } = el.getBoundingClientRect()
+    return vertical ? [height, width] : [width, height]
+  }
+  // All is read before anything is written. Where tables are broken between columns, the box
+  // around the parts of one is no longer than a column.
+  const long: [table: Element, sized: [HTMLElement, number][]][] = []
+  for (const table of doc.querySelectorAll('table')) {
+    if (!(table instanceof doc.defaultView!.HTMLTableElement) || (table.parentElement && closest.call(table.parentElement, 'table'))) continue
+    if (sizes(table)[1] <= room) continue
+    // Its own rows and cells, not those of the tables in it.
+    const cells = [...table.rows].flatMap((row) => [...row.cells])
+    if (cells.some((cell) => cell.rowSpan > 1)) continue
+    long.push([table, [table, ...cells].map((el) => [el, sizes(el)[0]])])
+  }
+  for (const [table, sized] of long) {
+    setAttribute.call(table, BY_ROWS, '')
+    for (const [el, size] of sized) el.style.setProperty(TABLE_SIZE, `${size}px`)
+  }
+}
+
 /**
  * Lays out `doc` in pages of `width` × `height`, by the rules written into `style` (a style
  * element in `doc`). `bookWritingMode` is the writing mode that the book itself declares.
@@ -100,7 +145,9 @@ export function paginate(
       max-height: ${vertical ? `min(100%, ${h - 2 * m}px)` : `${h - 2 * m}px`} !important;
       object-fit: contain;
       break-inside: avoid;
-    }`
+    }
+    ${TABLE_RULES}`
+  splitLongTables(doc, vertical, (vertical ? w : h) - 2 * m)
   const scroller = doc.scrollingElement!
   const scrollSize = vertical ? scroller.scrollHeight : scroller.scrollWidth
   // Where the content ends. WebKit also counts a column that only holds the margin after the last

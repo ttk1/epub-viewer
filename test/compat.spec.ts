@@ -283,3 +283,43 @@ test('every next() in two columns goes forward, to the last page and on to the n
   }
   expect(backwards).toEqual([])
 })
+
+for (const [name, head] of [['horizontal', ''], ['vertical', VERTICAL]]) {
+  test(`a table that is longer than a page goes on to the next pages (${name})`, async ({ page }) => {
+    // As in the list of illustrations of a Project Gutenberg book: a title and a page number, then a line about it.
+    const rows = Array.from({ length: 40 }, (_, i) => `<tr><td>Illustration ${i}</td><td align="right">${i * 7}</td></tr><tr><td class="about">What is in it</td></tr>`)
+    const bytes = makeBook([['a.xhtml', xhtml(`<h2>Illustrations</h2><table width="90%">${rows.join('')}</table>`, head)]], PAGE, SPINE, head ? 'rtl' : 'ltr')
+    const result = await open(page, bytes, (_viewer, _book, doc) => {
+      const vertical = getComputedStyle(doc.documentElement).writingMode.startsWith('vertical')
+      const scroller = doc.scrollingElement!
+      // Where a cell is along the pages, where it is across them (a row that is not on its page is cut there), and how wide its column is.
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect()
+        return vertical ? { at: r.top + scroller.scrollTop, from: r.left, to: r.right, size: r.height } : { at: r.left + scroller.scrollLeft, from: r.top, to: r.bottom, size: r.width }
+      }
+      // The first cell of each row: the lines about the illustrations are in the column of the titles.
+      const rows = [...doc.querySelectorAll('td:first-child')].map(box)
+      // But for a cell on both sides of a break: WebKit gives it the box around both parts.
+      const sizes = rows.map((row) => row.size).filter((size) => size < (vertical ? innerHeight : innerWidth / 2))
+      const { pages } = (window as any).last
+      return {
+        pages,
+        // No row is outside the page it is on, and the last one is on the last page.
+        cut: rows.filter((row) => row.from < 31 || row.to > (vertical ? innerWidth : innerHeight) - 31).length,
+        lastPage: Math.floor(rows.at(-1)!.at / (vertical ? innerHeight : innerWidth)) + 1,
+        // The rows are still those of one table: its columns are as wide in every row, and the second has its room.
+        uneven: Math.round(Math.max(...sizes) - Math.min(...sizes)),
+        columns: sizes[0] < box(doc.querySelector('table')!).size * 0.9,
+      }
+    })
+    expect(result).toEqual({ pages: result.lastPage, cut: 0, lastPage: expect.any(Number), uneven: 0, columns: true })
+    expect(result.pages).toBeGreaterThan(1)
+  })
+}
+
+test('tables within tables, 500 deep, are still shown', async ({ page }) => {
+  // Laid out by rows, each of them made the page deeper for the browser: Chromium crashed, which it did not for the book as it is.
+  const body = `${'<table><tr><td>a</td><td>'.repeat(500)}<table>${'<tr><td>Title</td><td>12</td></tr>'.repeat(200)}</table>${'</td></tr></table>'.repeat(500)}`
+  const shown = await open(page, makeBook([['a.xhtml', xhtml(body)]], PAGE, SPINE), (_viewer, _book, doc) => doc.querySelectorAll('table').length)
+  expect(shown).toBe(501)
+})
