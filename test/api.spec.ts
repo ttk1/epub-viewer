@@ -607,6 +607,41 @@ test('EpubReader offers the choices and the font sizes that the app gives it', a
   await expect(page.locator('.font-size')).toHaveText('23')
 })
 
+test('EpubReader offers only the widths that are narrower than the page', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 700 }) // a phone: every width of the menu is wider
+  await page.goto('/app/')
+  await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const root = document.createElement('div')
+    root.style.height = '100vh'
+    document.body.replaceChildren(root)
+    const reader = new EpubReader(root, { storage: null })
+    ;(window as any).reader = reader
+    await reader.open('/samples/nepub.epub')
+  })
+  const row = page.locator('.settings .row', { hasText: '表示幅' })
+  const offered = () => page.locator('.settings input[name=maxWidth]').evaluateAll((inputs) => inputs.filter((input) => (input as HTMLElement).offsetParent).map((input) => (input as HTMLInputElement).value))
+  await page.locator('.settings summary').click()
+  await expect(row).toBeHidden()
+  await expect(page.locator('.settings .row', { hasText: '余白' })).toBeVisible()
+  // The page gets wider (the phone is turned, the window is made larger): the widths that fit come in.
+  await page.setViewportSize({ width: 700, height: 400 })
+  await expect(row).toBeVisible()
+  expect(await offered()).toEqual(['0', '600'])
+  await page.setViewportSize({ width: 1250, height: 700 })
+  await expect.poll(offered).toEqual(['0', '1200', '1000', '800', '600'])
+  // The same for choices of the app, also when they come later.
+  await page.evaluate(() => (window as any).reader.setChoices({ maxWidth: [[0, '全幅'], [2000, '広い'], [500, '狭い']] }))
+  expect(await offered()).toEqual(['0', '500'])
+  // A choice that goes away does not take the focus with it: the menu still closes with Esc.
+  await page.locator('.settings input[name=maxWidth][value="500"]').focus()
+  await page.setViewportSize({ width: 450, height: 700 })
+  await expect(row).toBeHidden()
+  expect(await page.evaluate(() => document.activeElement!.localName)).toBe('summary')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.settings .panel')).toBeHidden()
+})
+
 test('EpubReader.setChoices() replaces rows of the settings menu, and nothing else', async ({ page }) => {
   await page.goto('/app/')
   await page.evaluate(async () => {

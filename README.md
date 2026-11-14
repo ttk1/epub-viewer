@@ -377,7 +377,7 @@ EPUB を読み込みます。`source` は URL（文字列 / `URL`）、`File` / 
 | `storageKey` | `'epub-viewer'` | 保存キーの接頭辞。設定は `<storageKey>:settings`、読書位置は `<storageKey>:position:<キー>` に保存される |
 | `settings` | – | 初期設定 `{ theme, font, fontSize, lineHeight, maxWidth, margin, writingMode, spread, direction }`。`theme` は `'system'` / `'light'` / `'sepia'` / `'dark'`、`font` は `'mincho'` / `'gothic'` / `'book'`、それ以外は `EpubViewer` の同名のオプションと同じ。既定は OS に合わせたテーマ・明朝・45px・それ以外は `EpubViewer` の既定値。保存されるのはユーザーが変えた項目だけで、それ以外はここで指定した値が使われ続ける |
 | `viewer` | – | 内部の `EpubViewer` に渡すオプション（`keyboard`・`click`・`wheel`・`swipe`・`cooldown`）。見た目のオプション（余白の `margin` を含む）は設定から決まる |
-| `choices` | – | 設定メニューに並べる選択肢。`{ lineHeight, maxWidth, margin }` のうち変えたいものに、`[値, ラベル]` の配列を渡す（例: `{ margin: [[0, 'なし'], [32, '標準'], [128, '広い']] }`）。値の意味は `EpubViewer` の同名のオプションと同じ。渡さなかった設定は既定の選択肢のまま。空の配列を渡した設定は、メニューに出ない（幅をサイト側で決めている場合など）。後から `setChoices()` で入れ替えられる |
+| `choices` | – | 設定メニューに並べる選択肢。`{ lineHeight, maxWidth, margin }` のうち変えたいものに、`[値, ラベル]` の配列を渡す（例: `{ margin: [[0, 'なし'], [32, '標準'], [128, '広い']] }`）。値の意味は `EpubViewer` の同名のオプションと同じ。渡さなかった設定は既定の選択肢のまま。空の配列を渡した設定は、メニューに出ない（幅をサイト側で決めている場合など）。表示幅の選択肢のうち、いまのページの幅以上のもの（選んでも変わらないもの）は表示されず、「全幅」（0）しか残らなければ行ごと隠れる（スマートフォンなど。幅が変われば追従する）。後から `setChoices()` で入れ替えられる |
 | `fontSizeSteps` | `{ min: 12, max: 120, step: 1.2 }` | 文字サイズのボタン（A− / A＋）で変えられる範囲（px）と、1 回で何倍にするか。変えたいものだけ渡せばよい。範囲はボタンにだけ効く: `settings` や `setSettings()`、保存された設定の値は範囲の外でもそのまま使われ、次にボタンを押したときに範囲の中へ入る |
 
 | メソッド・プロパティ | 説明 |

@@ -243,6 +243,7 @@ const STYLE = `
   .epub-reader[data-layout='reflowable'] .only-pre-paginated,
   .epub-reader[data-writing='vertical'] .not-vertical { display: none; }
   .epub-reader .row { display: grid; grid-template-columns: 5.5em 1fr; align-items: center; }
+  .epub-reader .settings [hidden] { display: none; } /* rows and choices that would do nothing */
   .epub-reader .row > :first-child { opacity: 0.7; }
   .epub-reader .choices { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
   .epub-reader .choices label { position: relative; display: flex; }
@@ -295,6 +296,8 @@ export class EpubReader {
   readonly #menuObserver = new MutationObserver(() => {
     this.#root.classList.toggle('menu-open', !!this.toolbar.querySelector('details[open]'))
   })
+  /** The width of the page changes which widths can be chosen. */
+  readonly #widthObserver = new ResizeObserver(() => this.#fitChoices())
 
   /** `root` must have a height; the reader fills it. */
   constructor(
@@ -347,6 +350,7 @@ export class EpubReader {
     this.#menuObserver.observe(this.toolbar, { attributeFilter: ['open'], subtree: true })
     this.#systemDark.addEventListener('change', this.#apply) // follow the OS while theme is "system"
     this.setChoices({ ...DEFAULT_CHOICES, ...offered })
+    this.#widthObserver.observe(this.#part('viewer'))
     this.#apply()
   }
 
@@ -395,6 +399,23 @@ export class EpubReader {
       // where Tab would have entered the new row, or, without that row, to the button of the menu.
       if (focused) (made?.querySelector<HTMLElement>(':checked') ?? made?.querySelector('input') ?? this.toolbar.querySelector<HTMLElement>('.settings summary'))?.focus({ preventScroll: true })
     }
+    this.#fitChoices()
+  }
+
+  /**
+   * A width that is not narrower than the page does nothing when chosen (on a phone, none of them
+   * does): such a choice is not shown, nor is the row when only the full width (0) is left.
+   */
+  #fitChoices(): void {
+    const width = this.#root.querySelector('.viewer')?.clientWidth ?? 0 // gone after destroy()
+    const inputs = [...this.toolbar.querySelectorAll<HTMLInputElement>('.settings input[name=maxWidth]')]
+    const row = inputs[0]?.closest<HTMLElement>('.row')
+    if (!row) return
+    for (const input of inputs) input.parentElement!.hidden = Number(input.value) >= width && Number(input.value) > 0
+    row.hidden = !inputs.some((input) => Number(input.value) > 0 && !input.parentElement!.hidden)
+    // The focus is not left on a choice that is not there any more.
+    const focus = this.#root.ownerDocument.activeElement
+    if (row.contains(focus) && focus!.closest('.row[hidden], label[hidden]')) this.toolbar.querySelector<HTMLElement>('.settings summary')?.focus({ preventScroll: true })
   }
 
   /** Shows the radio buttons with the value of their setting as chosen. */
@@ -449,6 +470,7 @@ export class EpubReader {
     this.#root.ownerDocument.removeEventListener('keydown', this.#onKeydown)
     this.#systemDark.removeEventListener('change', this.#apply)
     this.#menuObserver.disconnect()
+    this.#widthObserver.disconnect()
     this.#opening = undefined // a book that is still being opened is not shown
     this.viewer.destroy()
     this.#book?.destroy()
