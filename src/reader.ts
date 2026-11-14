@@ -33,8 +33,26 @@ export interface ReaderOptions {
   storageKey: string
   /** Initial settings, used until the user changes them. */
   settings: Partial<ReaderSettings>
+  /**
+   * The values that the settings menu offers for line height, width and margin, each as
+   * `[value, label]`: for a site whose pages want other steps than those of the reader. A setting
+   * that is left out keeps the choices of the reader; one with no choices is not in the menu.
+   */
+  choices: Partial<ReaderChoices>
+  /** The sizes that the font size buttons go through: from `min` to `max` px, each `step` times the one before. */
+  fontSize: Partial<FontSizeSteps>
   /** Other EpubViewer options (e.g. `keyboard`, `wheel`, `cooldown`). Look-related ones, the margin among them, come from the settings. */
   viewer: Partial<ViewerOptions>
+}
+
+/** The choices of the settings that take any number. Other values can still be set with setSettings(): the menu then shows none as chosen. */
+export type ReaderChoices = Record<'lineHeight' | 'maxWidth' | 'margin', [value: number, label: string][]>
+
+export interface FontSizeSteps {
+  min: number
+  max: number
+  /** How many times larger the next size is. */
+  step: number
 }
 
 export interface OpenOptions {
@@ -59,6 +77,16 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   direction: 'auto',
 }
 
+const DEFAULT_CHOICES: ReaderChoices = {
+  lineHeight: [[0, '本の指定'], [1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']],
+  maxWidth: [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']],
+  margin: [[16, '狭い'], [32, '標準'], [64, '広い'], [96, 'とても広い']],
+}
+const DEFAULT_FONT_SIZE: FontSizeSteps = { min: 12, max: 120, step: 1.2 } // equal-looking steps at any size
+
+/** Text of the app (a label of its choices), for the HTML of the toolbar. */
+const escapeHtml = (text: unknown) => String(text).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+
 /** What the keys do while the focus is on the slider: the page turns of the viewer. */
 const SEEK_KEYS: Record<string, 'goLeft' | 'goRight' | 'prev' | 'next' | undefined> = {
   ArrowLeft: 'goLeft',
@@ -69,12 +97,12 @@ const SEEK_KEYS: Record<string, 'goLeft' | 'goRight' | 'prev' | 'next' | undefin
   PageDown: 'next',
 }
 
-/** A row of the settings panel: radio buttons named after the setting, one per value. */
-const choices = (name: keyof ReaderSettings, label: string, options: [value: string | number, label: string, style?: string][]) => `
+/** A row of the settings panel: radio buttons named after the setting, one per value. No row for a setting without values. */
+const choices = (name: keyof ReaderSettings, label: string, options: [value: string | number, label: string, style?: string][]) => !options.length ? '' : `
   <div class="row">
     <span>${label}</span>
     <span class="choices" role="radiogroup" aria-label="${label}">
-      ${options.map(([value, text, style = '']) => `<label><input type="radio" name="${name}" value="${value}"><span style="${style}">${text}</span></label>`).join('')}
+      ${options.map(([value, text, style = '']) => `<label><input type="radio" name="${name}" value="${escapeHtml(value)}"><span style="${style}">${escapeHtml(text)}</span></label>`).join('')}
     </span>
   </div>`
 const swatch = ({ background, color }: Theme) => `background:${background};color:${color}`
@@ -83,7 +111,7 @@ const swatch = ({ background, color }: Theme) => `background:${background};color
 // <form> to keep the radio button groups of several readers on one page apart. Settings that only
 // work for one kind of book (reflowable text, or fixed-layout pages) are shown for that kind only,
 // and the spread not for vertical text.
-const TOOLBAR = `
+const toolbar = (offered: ReaderChoices) => `
   <details class="toc" hidden>
     <summary>目次</summary>
     <div class="panel toc-list"></div>
@@ -104,9 +132,9 @@ const TOOLBAR = `
           </span>
         </div>
         ${choices('font', 'フォント', [['mincho', '明朝'], ['gothic', 'ゴシック'], ['book', '本の指定']])}
-        ${choices('lineHeight', '行間', [[0, '本の指定'], [1.3, '狭い'], [1.6, '標準'], [1.9, '広い'], [2.2, 'とても広い']])}
-        ${choices('maxWidth', '表示幅', [[0, '全幅'], [1400, '1400'], [1200, '1200'], [1000, '1000'], [800, '800'], [600, '600']])}
-        ${choices('margin', '余白', [[16, '狭い'], [32, '標準'], [64, '広い'], [96, 'とても広い']])}
+        ${choices('lineHeight', '行間', offered.lineHeight)}
+        ${choices('maxWidth', '表示幅', offered.maxWidth)}
+        ${choices('margin', '余白', offered.margin)}
         ${choices('writingMode', '表示方向', [['auto', '自動'], ['vertical', '縦書き'], ['horizontal', '横書き']])}
       </div>
       <div class="not-vertical">
@@ -247,6 +275,7 @@ export class EpubReader {
   readonly #root: HTMLElement
   readonly #storage: ReaderOptions['storage']
   readonly #storageKey: string
+  readonly #fontSize: FontSizeSteps
   readonly #systemDark = matchMedia('(prefers-color-scheme: dark)')
   #settings: ReaderSettings
   #positionKey = ''
@@ -269,17 +298,18 @@ export class EpubReader {
   /** `root` must have a height; the reader fills it. */
   constructor(
     root: HTMLElement,
-    { storage = defaultStorage(), storageKey = 'epub-viewer', settings = {}, viewer = {} }: Partial<ReaderOptions> = {},
+    { storage = defaultStorage(), storageKey = 'epub-viewer', settings = {}, viewer = {}, choices: offered = {}, fontSize = {} }: Partial<ReaderOptions> = {},
   ) {
     const doc = root.ownerDocument
     if (!doc.getElementById('epub-reader-style')) {
       doc.head.append(Object.assign(doc.createElement('style'), { id: 'epub-reader-style', textContent: STYLE }))
     }
     root.classList.add('epub-reader')
-    root.innerHTML = `<header class="toolbar">${TOOLBAR}</header><div class="viewer"></div>`
+    root.innerHTML = `<header class="toolbar">${toolbar({ ...DEFAULT_CHOICES, ...offered })}</header><div class="viewer"></div>`
     this.#root = root
     this.#storage = storage
     this.#storageKey = storageKey
+    this.#fontSize = { ...DEFAULT_FONT_SIZE, ...fontSize }
     this.toolbar = root.querySelector('.toolbar')!
     this.viewer = new EpubViewer(root.querySelector('.viewer')!, viewer)
     // Of what is saved, only settings of the right kind: a font size that is not a number could not be changed any more.
@@ -428,8 +458,11 @@ export class EpubReader {
     // The controls of the reader, and buttons added by the app; not other things that it adds (e.g. a text field).
     const control = (e.target as Element).closest<HTMLElement>('button, summary, .settings input, .seek')
     if (control?.matches('.font-up, .font-down')) {
-      const ratio = control.matches('.font-up') ? 1.2 : 1 / 1.2 // equal-looking steps at any size
-      this.setSettings({ fontSize: Math.min(120, Math.max(12, Math.round(this.#settings.fontSize * ratio))) })
+      const { min, max, step } = this.#fontSize
+      const size = this.#settings.fontSize
+      // By a pixel at least: a small step, rounded, would leave a small size where it is.
+      const next = control.matches('.font-up') ? Math.max(size + 1, Math.round(size * step)) : Math.min(size - 1, Math.round(size / step))
+      this.setSettings({ fontSize: Math.min(max, Math.max(min, next)) })
     } else if (control?.matches('.toc-list button')) {
       this.#closeMenus()
       this.#goTo((control as HTMLButtonElement).value)

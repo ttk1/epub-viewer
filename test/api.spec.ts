@@ -1,6 +1,6 @@
 // The API as an embedding app uses it: a viewer or a reader made by the test itself.
 import { expect, test, type Page } from '@playwright/test'
-import { content, evaluate, heading, click, press } from './helpers.ts'
+import { content, evaluate, heading, click, press, setting } from './helpers.ts'
 
 test('a click on the middle of the page is reported as a tap, one on the side turns the page', async ({ page }) => {
   await page.goto('/app/')
@@ -571,4 +571,38 @@ test('EpubReader shows the book opened last, even when an earlier one takes long
   expect(titles).toEqual(['連載サンプル', '連載サンプル', '連載サンプル']) // both calls give the book that is shown
   await expect(page.locator('.title')).toHaveText('連載サンプル')
   await expect.poll(() => heading(page)).toBe('第1話　サンプル')
+})
+
+test('EpubReader offers the choices and the font sizes that the app gives it', async ({ page }) => {
+  await page.goto('/app/')
+  await page.evaluate(async () => {
+    const { EpubReader } = await import('/dist/src/index.js' as string)
+    const root = document.createElement('div')
+    root.style.height = '100vh'
+    document.body.replaceChildren(root)
+    const reader = new EpubReader(root, {
+      storageKey: 'choices',
+      settings: { fontSize: 22 },
+      choices: { margin: [[0, 'なし'], [200, '<b>広い</b>']], maxWidth: [] },
+      fontSize: { max: 24, step: 1.01 },
+    })
+    ;(window as any).reader = reader
+    await reader.open('/samples/nepub.epub')
+  })
+  const values = (name: string) => page.locator(`.settings input[name=${name}]`).evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))
+  expect(await values('margin')).toEqual(['0', '200'])
+  expect(await values('maxWidth')).toEqual([]) // no choices: not in the menu
+  await expect(page.locator('.settings .row', { hasText: '表示幅' })).toHaveCount(0)
+  expect(await values('lineHeight')).toHaveLength(5) // not given: those of the reader
+  // A label is text, not markup.
+  await expect(page.locator('.settings b')).toHaveCount(0)
+  await setting(page, 'margin', '200')
+  expect(await page.evaluate(() => [(window as any).reader.viewer.options.margin, localStorage.getItem('choices:settings')])).toEqual([200, '{"margin":200}'])
+  // A step too small to be seen after rounding still changes the size, up to the largest.
+  for (const size of ['23', '24', '24']) {
+    await page.locator('.font-up').click()
+    await expect(page.locator('.font-size')).toHaveText(size)
+  }
+  await page.locator('.font-down').click()
+  await expect(page.locator('.font-size')).toHaveText('23')
 })
